@@ -6,10 +6,10 @@ pub struct WriteAheadLogService {
 impl WriteAheadLogService {
 
     // Creates a new WriteAheadLogService instance
-    pub fn new(log_file_path: String) -> Self {
-        Self { log_file_path }
+    pub fn new(log_path: String) -> Self {
+        Self { log_file_path: log_path }
     }
 
     // Appends a log entry to the end of the log file
-    pub fn append(&self, log_entry: String) {}
+    pub async fn append(&self, entry: String) {}
 }

@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package spanner.paxos.services;
+
+// A service exposing APIs that allow invoking a Paxos group leader to perform actions according to the Paxos protocol
+service LeaderService {
+    // Save a write log entry
+    rpc SaveWrite (SaveWriteRequest) returns (SaveWriteResponse);
+}
+
+message SaveWriteRequest {
+    // The payload of the log entry
+    string payload = 1;
+}
+
+message SaveWriteResponse {}

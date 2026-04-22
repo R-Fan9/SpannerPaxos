@@ -4,7 +4,7 @@ package spanner.paxos.services;
 
 import "google/protobuf/timestamp.proto";
 
-// A service exposing APIs that allow invoking a follower to perform actions according to the Paxos protocol
+// A service exposing APIs that allow invoking a Paxos group follower to perform actions according to the Paxos protocol
 service FollowerService {
     // Replicate a write log entry
     rpc ReplicateWrite (ReplicateWriteRequest) returns (ReplicateWriteResponse);
@@ -20,8 +20,8 @@ message ReplicateWriteRequest {
     // The slot number of the log entry
     uint32 slot_number = 2;
 
-    // The payload of the log entry
-    string payload = 3;
+    // The log entry
+    string entry = 3;
 
     // The timestamp assigned to the log entry by the leader
     google.protobuf.Timestamp write_time = 4;
@@ -30,13 +30,23 @@ message ReplicateWriteRequest {
     google.protobuf.Timestamp lease_expiry_time = 5;
 }
 
-message ReplicateWriteResponse {}
+message ReplicateWriteResponse {
+    // The ID of the follower who replicated the log entry
+    string follower_id = 1;
+
+    // The term (ballot) number in which the log entry was replicated on
+    uint32 term_number = 2;
+
+    // The slot number of log entry that got replicated
+    uint32 slot_number = 3;
+
+}
 
 message CommitWriteRequest {
     // The term (ballot) number of leader who sent the commit request
     uint32 term_number = 1;
 
-    // The slot number of the log entry to be committed
+    // The commit index (slot number) of the log entry to be committed
     uint32 commit_index = 2;
 }
 

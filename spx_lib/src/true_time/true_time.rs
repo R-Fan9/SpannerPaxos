@@ -1,6 +1,8 @@
+use chrono::{DateTime, Utc};
+
 pub struct TimeInterval {
-    pub earliest: u64,
-    pub latest: u64,
+    pub earliest: DateTime<Utc>,
+    pub latest: DateTime<Utc>,
 }
 
 // A True Time (TT) service responsible for returning accurate current time as a bounded interval
@@ -11,18 +13,18 @@ impl TrueTimeService {
     // Returns the current time as a bounded interval
     pub fn now(&self) -> TimeInterval {
         TimeInterval {
-            earliest: 0,
-            latest: 0,
+            earliest: Utc::now(),
+            latest: Utc::now(),
         }
     }
 
     // Checks if a timestamp is before the lower bound of the current time interval
-    pub fn before(&self, timestamp: u64) -> bool {
+    pub fn before(&self, timestamp: DateTime<Utc>) -> bool {
         true
     }
 
     // Checks if a timestamp is after the upper bound of the current time interval
-    pub fn after(&self, timestamp: u64) -> bool {
+    pub fn after(&self, timestamp: DateTime<Utc>) -> bool {
         true
     }
 }

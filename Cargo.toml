@@ -1,2 +1,7 @@
 [workspace]
-members = ["spx_app"]
+members = [
+    "spx_app",
+    "spx_core",
+    "spx_client",
+    "spx_lib",
+]

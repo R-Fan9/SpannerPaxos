@@ -1,5 +1,3 @@
-mod true_time;
-mod wal;
+mod leader_service;
 
-pub use self::true_time::{TrueTimeService, TimeInterval};
-pub use self::wal::WriteAheadLogService;
+pub use leader_service::LeaderService;
