@@ -1,6 +1,7 @@
 use crate::commands::ReplicateWriteCommand;
 use crate::handles::{ReplicateWriteHandler, ReplicateWriteResult};
 use spx_core::processors::ReplicateWriteProcessor;
+use spx_core::responses::ReplicateWriteResponse;
 use std::error::Error;
 use std::future::Future;
 use std::pin::Pin;
@@ -28,9 +29,13 @@ async fn handle_replicate_write_response(
     result: ReplicateWriteResult,
 ) -> Result<(), Box<dyn Error>> {
     let resp = result?.into_inner();
-    let follower_id = Uuid::parse_str(&resp.follower_id)?;
+    let resp = ReplicateWriteResponse {
+        term_number: resp.term_number,
+        slot_number: resp.slot_number,
+        follower_id: Uuid::parse_str(&resp.follower_id)?,
+    };
 
-    if processor.quorum_reached(follower_id, resp.term_number, resp.slot_number)? {
+    if processor.quorum_reached(resp)? {
         command.send(Ok(())).await?;
     }
     Ok(())
