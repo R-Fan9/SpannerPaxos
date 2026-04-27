@@ -5,13 +5,12 @@ edition = "2024"
 
 [dependencies]
 spx_core = { path = "../spx_core" }
-spx_client = { path = "../spx_client" }
 spx_lib = { path = "../spx_lib" }
+spx_protocol = { path = "../spx_protocol" }
 tokio = { version = "1.50.0", features = ["macros", "rt-multi-thread"] }
 tokio-util = "0.7.18"
 tonic = "0.14.5"
 prost-types = "0.14.3"
 chrono = "0.4.44"
 uuid = { version = "1.10", features = ["v4"] }
-futures = "0.3.32"
 

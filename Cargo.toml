@@ -1,7 +1,7 @@
 [workspace]
 members = [
     "spx_app",
-    "spx_core",
-    "spx_client",
     "spx_lib",
+    "spx_core",
+    "spx_protocol",
 ]

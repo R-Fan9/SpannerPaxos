@@ -5,7 +5,7 @@ package spanner.paxos.services;
 import "google/protobuf/timestamp.proto";
 
 // A service exposing APIs that allow invoking a Paxos group follower to perform actions according to the Paxos protocol
-service FollowerService {
+service Follower {
     // Replicate a write log entry
     rpc ReplicateWrite (ReplicateWriteRequest) returns (ReplicateWriteResponse);
 

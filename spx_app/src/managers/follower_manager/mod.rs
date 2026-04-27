@@ -1,50 +1,53 @@
 use crate::commands::ReplicateWriteCommand;
-use crate::handles::{FollowerHandle, ReplicateWriteHandler};
-use crate::payloads::ReplicateWritePayload;
-use spx_client::FollowerServiceClient;
+use crate::configs::FollowerConfig;
+use crate::handles::FollowerHandle;
+use spx_core::payloads::ReplicateWritePayload;
+use spx_core::processors::ReplicateWriteProcessor;
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tonic::transport::Channel;
 use uuid::Uuid;
+
+mod util;
 
 // A manager that handles follower-related operations
 pub struct FollowerManager {
-    follower_ids: HashSet<Uuid>,
-    followers_handles: Option<HashMap<Uuid, FollowerHandle>>,
+    follower_configs: HashSet<FollowerConfig>,
+    follower_handles: Option<HashMap<Uuid, FollowerHandle>>,
 }
 
 impl FollowerManager {
-    pub fn new(follower_ids: HashSet<Uuid>) -> Self {
+    pub fn new(follower_configs: HashSet<FollowerConfig>) -> Self {
         Self {
-            follower_ids,
-            followers_handles: None,
+            follower_configs,
+            follower_handles: None,
         }
     }
 
     pub async fn start_handles(
         &mut self,
-        replicate_write_handler: ReplicateWriteHandler,
+        replicate_write_processor: ReplicateWriteProcessor,
         cancellation_token: CancellationToken,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         let mut handles = HashMap::new();
-        for id in self.follower_ids.iter() {
-            // Create a gRPC client for the follower
-            let follower_client = Self::create_follower_client(id.clone()).await?;
+        for config in self.follower_configs.iter() {
+            // Create a handle for processing replicate write responses from the follower
+            let replicate_write_handler =
+                util::create_replicate_write_handler(replicate_write_processor.clone());
 
-            // Start a handle for follower-related operations
+            // Start a handle for dispatching and processing follower-related operations
             let handle = FollowerHandle::start(
-                follower_client,
-                replicate_write_handler.clone(),
+                config.clone(),
+                replicate_write_handler,
                 cancellation_token.clone(),
             )
             .await?;
 
-            handles.insert(id.clone(), handle);
+            handles.insert(config.follower_id, handle);
         }
 
-        self.followers_handles = Some(handles);
+        self.follower_handles = Some(handles);
         Ok(())
     }
 
@@ -53,7 +56,7 @@ impl FollowerManager {
         cancellation_token: CancellationToken,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         let handles = self
-            .followers_handles
+            .follower_handles
             .as_mut()
             .ok_or("Followers handles not started")?;
 
@@ -64,16 +67,13 @@ impl FollowerManager {
         Ok(())
     }
 
-    pub async fn replicate_write<F>(
+    pub async fn replicate_write(
         &self,
         payload: ReplicateWritePayload,
-        mut dispatch_callback: F,
-    ) -> Result<(), Box<dyn Error>>
-    where
-        F: FnMut(Uuid),
-    {
+        mut on_dispatched: impl FnMut(Uuid),
+    ) -> Result<(), Box<dyn Error>> {
         let handles = self
-            .followers_handles
+            .follower_handles
             .as_ref()
             .ok_or("Followers handles not started")?;
 
@@ -84,7 +84,7 @@ impl FollowerManager {
         for (id, handle) in handles.iter() {
             let command = ReplicateWriteCommand::new(payload.clone(), quorum_tx.clone());
             handle.dispatch_write(command);
-            dispatch_callback(id.clone());
+            on_dispatched(id.clone());
         }
 
         // Drop the original sender reference to ensure the channel can be closed
@@ -93,13 +93,5 @@ impl FollowerManager {
         // Wait for a quorum of followers to replicate the log entry
         quorum_rx.recv().await;
         Ok(())
-    }
-
-    async fn create_follower_client(
-        id: Uuid,
-    ) -> Result<FollowerServiceClient<Channel>, Box<dyn Error + Send + Sync>> {
-        // TODO - implement proper follower gRPC client connection
-        let endpoint = format!("http://localhost:{}", id);
-        Ok(FollowerServiceClient::connect(endpoint).await?)
     }
 }

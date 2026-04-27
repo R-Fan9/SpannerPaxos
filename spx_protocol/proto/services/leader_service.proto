@@ -3,7 +3,7 @@ syntax = "proto3";
 package spanner.paxos.services;
 
 // A service exposing APIs that allow invoking a Paxos group leader to perform actions according to the Paxos protocol
-service LeaderService {
+service Leader {
     // Save a write log entry
     rpc SaveWrite (SaveWriteRequest) returns (SaveWriteResponse);
 }
