@@ -1,5 +1,5 @@
 use prost_types::Timestamp;
-use spx_core::payloads::ReplicateWritePayload;
+use crate::payloads::ReplicateWritePayload;
 use spx_protocol::ReplicateWriteRequest;
 use std::error::Error;
 use tokio::sync::mpsc;

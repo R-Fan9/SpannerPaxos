@@ -1,15 +1,14 @@
 use crate::commands::ReplicateWriteCommand;
 use crate::configs::FollowerConfig;
 use crate::handles::FollowerHandle;
-use spx_core::payloads::ReplicateWritePayload;
-use spx_core::processors::ReplicateWriteProcessor;
+use crate::payloads::ReplicateWritePayload;
+use spx_core::states::LeaderState;
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
-
-mod util;
 
 // A manager that handles follower-related operations
 pub struct FollowerManager {
@@ -27,23 +26,18 @@ impl FollowerManager {
 
     pub async fn start_handles(
         &mut self,
-        replicate_write_processor: ReplicateWriteProcessor,
+        leader_state: Arc<LeaderState>,
         cancellation_token: CancellationToken,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         let mut handles = HashMap::new();
         for config in self.follower_configs.iter() {
-            // Create a handle for processing replicate write responses from the follower
-            let replicate_write_handler =
-                util::create_replicate_write_handler(replicate_write_processor.clone());
-
             // Start a handle for dispatching and processing follower-related operations
             let handle = FollowerHandle::start(
                 config.clone(),
-                replicate_write_handler,
+                leader_state.clone(),
                 cancellation_token.clone(),
             )
             .await?;
-
             handles.insert(config.follower_id, handle);
         }
 

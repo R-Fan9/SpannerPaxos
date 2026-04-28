@@ -1,16 +1,16 @@
+use crate::managers::FollowerManager;
 use crate::payloads::ReplicateWritePayload;
-use crate::states::LeaderState;
 use chrono::{DateTime, Utc};
+use spx_core::states::LeaderState;
 use spx_lib::true_time::TrueTimeService;
 use spx_lib::write_ahead_log::WriteAheadLogService;
 use std::error::Error;
-use std::future::Future;
 use std::sync::Arc;
-use uuid::Uuid;
 
 // An operator for handling leader-related operations
 pub struct LeaderOperator {
     leader: Arc<LeaderState>,
+    follower_manager: FollowerManager,
     tt_service: TrueTimeService,
     wal_service: WriteAheadLogService,
 }
@@ -18,25 +18,19 @@ pub struct LeaderOperator {
 impl LeaderOperator {
     pub fn new(
         leader: Arc<LeaderState>,
+        follower_manager: FollowerManager,
         tt_service: TrueTimeService,
         wal_service: WriteAheadLogService,
     ) -> Self {
         Self {
             leader,
+            follower_manager,
             tt_service,
             wal_service,
         }
     }
 
-    pub async fn save_write<F, Fut>(
-        &self,
-        entry: String,
-        replicate_write: F,
-    ) -> Result<(), Box<dyn Error>>
-    where
-        F: FnOnce(ReplicateWritePayload, Box<dyn FnMut(Uuid) + Send>) -> Fut,
-        Fut: Future<Output = Result<(), Box<dyn Error>>>,
-    {
+    pub async fn save_write(&self, entry: String) -> Result<(), Box<dyn Error>> {
         let write_time = self.get_latest_timestamp();
         let slot_number = self.leader.get_next_index(None);
 
@@ -49,15 +43,12 @@ impl LeaderOperator {
         self.leader.update_match_index(slot_number, None);
 
         // Start the Paxos write to replicate the log entry to all followers
-        let leader_state = self.leader.clone();
         let payload = self.create_replicate_write_payload(entry, slot_number, write_time);
-        replicate_write(
-            payload,
-            Box::new(move |follower_id| {
-                leader_state.inc_next_index(Some(follower_id));
-            }),
-        )
-        .await?;
+        self.follower_manager
+            .replicate_write(payload, |follower_id| {
+                self.leader.inc_next_index(Some(follower_id));
+            })
+            .await?;
 
         // Start commit wait to ensure the timestamp assigned to the log entry has passed,
         // this is needed to ensure external consistency (linearizability)

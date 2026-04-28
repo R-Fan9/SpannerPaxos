@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
+use std::error::Error;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicU32, Ordering};
 use uuid::Uuid;

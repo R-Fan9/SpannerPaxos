@@ -1,18 +1,16 @@
 use crate::commands::ReplicateWriteCommand;
 use crate::configs::FollowerConfig;
+use crate::handles::types::ReplicateWriteResult;
+use spx_core::states::LeaderState;
 use spx_lib::task_dispatcher::TaskDispatcher;
 use spx_lib::worker_runner::{Worker, WorkerRunner};
-use spx_protocol::follower_client::FollowerClient;
 use std::error::Error;
-use std::pin::Pin;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
-use tonic::transport::Channel;
 
-mod types;
+pub mod types;
+
 mod util;
-
-pub use types::*;
 
 // A handle for dispatching requests to a follower and processes the follower's responses in the background
 pub struct FollowerHandle {
@@ -25,11 +23,11 @@ pub struct FollowerHandle {
 impl FollowerHandle {
     pub async fn start(
         follower_config: FollowerConfig,
-        replicate_write_handler: ReplicateWriteHandler,
+        leader_state: Arc<LeaderState>,
         cancellation_token: CancellationToken,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let client = util::create_follower_client(follower_config).await?;
-        let write_runner = Self::create_write_dispatcher(client, replicate_write_handler)
+        let write_runner = util::create_replicate_write_dispatcher(leader_state, client)
             .run(cancellation_token)
             .await?;
 
@@ -47,26 +45,5 @@ impl FollowerHandle {
     // Dispatches a replicate write request to the follower
     pub fn dispatch_write(&self, command: ReplicateWriteCommand) {
         self.write_runner.get_worker().dispatch(command);
-    }
-
-    fn create_write_dispatcher(
-        client: FollowerClient<Channel>,
-        handler: ReplicateWriteHandler,
-    ) -> TaskDispatcher<ReplicateWriteCommand, (ReplicateWriteCommand, ReplicateWriteResult)> {
-        let executor = Arc::new(move |command: ReplicateWriteCommand| {
-            Self::replicate_write(client.clone(), command)
-        });
-        TaskDispatcher::new(executor, handler)
-    }
-
-    fn replicate_write(
-        mut client: FollowerClient<Channel>,
-        command: ReplicateWriteCommand,
-    ) -> Pin<Box<dyn Future<Output = (ReplicateWriteCommand, ReplicateWriteResult)> + Send>> {
-        Box::pin(async move {
-            let request = command.create_request();
-            let resp = client.replicate_write(request).await;
-            (command, resp)
-        })
     }
 }
