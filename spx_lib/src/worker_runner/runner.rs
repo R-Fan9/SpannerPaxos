@@ -34,8 +34,11 @@ where
         }
     }
 
-    pub fn get_worker(&self) -> Arc<T> {
-        self.worker.clone()
+    pub fn get_worker(&self) -> Result<Arc<T>, Box<dyn Error + Send + Sync>> {
+        if self.run_status.load(Ordering::Acquire) != u8::from(RunStatus::ACTIVE) {
+            return Err("Worker runner is not active".into());
+        }
+        Ok(self.worker.clone())
     }
 
     pub async fn start(

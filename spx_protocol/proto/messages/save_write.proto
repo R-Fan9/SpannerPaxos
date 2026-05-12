@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package spx.messages;
+
+message SaveWriteRequest {
+    // The payload of the log entry
+    string payload = 1;
+}
+
+message SaveWriteResponse {}

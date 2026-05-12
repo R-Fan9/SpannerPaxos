@@ -13,4 +13,5 @@ tonic = "0.14.5"
 prost-types = "0.14.3"
 chrono = "0.4.44"
 uuid = { version = "1.10", features = ["v4"] }
+serde = { version = "1.0.228", features = ["derive"] }
 

@@ -1,9 +1,9 @@
 // A write ahead log (WAL) service responsible for appending log entries to a file
-pub struct WriteAheadLogService {
+pub struct WriteAheadLog {
     log_file_path: String,
 }
 
-impl WriteAheadLogService {
+impl WriteAheadLog {
 
     // Creates a new WriteAheadLogService instance
     pub fn new(log_path: String) -> Self {
@@ -11,5 +11,7 @@ impl WriteAheadLogService {
     }
 
     // Appends a log entry to the end of the log file
-    pub async fn append(&self, entry: String) {}
+    pub async fn append(&self, entry: String) {
+        // TODO - Implement
+    }
 }

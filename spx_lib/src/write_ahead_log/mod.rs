@@ -1,3 +1,3 @@
 mod wal;
 
-pub use wal::WriteAheadLogService;
+pub use wal::WriteAheadLog;
