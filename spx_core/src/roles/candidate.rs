@@ -12,17 +12,6 @@ impl Candidate {
         Self {}
     }
 
-    fn handle_pre_vote_response(
-        response: PreVoteResponse,
-        ctx: &PaxosSharedContext,
-    ) -> Option<Follower> {
-        let leader_id = util::get_active_leader(&response, ctx.get_current_term(), |received_term, local_term| received_term > local_term)?;
-        println!(
-            "Info: Member {} reported active leader {}, stepping down as a follower",
-            response.member_id, leader_id
-        );
-        Some(Follower::new(Some(leader_id)))
-    }
 
     pub async fn dispatch_vote(
         &self,
@@ -34,6 +23,19 @@ impl Candidate {
 
         // Set a deadline for the whole vote campaign to 3 seconds
         todo!()
+    }
+
+    fn handle_pre_vote_response(
+        &self,
+        response: PreVoteResponse,
+        ctx: &PaxosSharedContext,
+    ) -> Option<Follower> {
+        let leader_id = util::get_active_leader(&response, ctx.get_current_term(), |received_term, local_term| received_term > local_term)?;
+        println!(
+            "Info: Member {} reported active leader {} at term {}, stepping down as a follower",
+            response.member_id, leader_id, response.term
+        );
+        Some(Follower::new(Some(leader_id)))
     }
 }
 
@@ -56,7 +58,7 @@ impl PaxosRole for Candidate {
                 Ok(PaxosState::Candidate(self))
             }
             PaxosEvent::PreVoteResponseReceived(response) => {
-                if let Some(follower) = Self::handle_pre_vote_response(response, &ctx) {
+                if let Some(follower) = self.handle_pre_vote_response(response, &ctx) {
                     return Ok(PaxosState::Follower(follower));
                 }
                 Ok(PaxosState::Candidate(self))

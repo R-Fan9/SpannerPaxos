@@ -120,8 +120,8 @@ impl Follower {
             return;
         };
         println!(
-            "Info: Member {} reported active leader {}, updating known leader",
-            response.member_id, leader_id
+            "Info: Member {} reported active leader {} at term {}, updating known leader",
+            response.member_id, leader_id, response.term
         );
         self.update_current_leader_id(leader_id);
     }

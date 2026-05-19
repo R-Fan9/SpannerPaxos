@@ -88,8 +88,8 @@ impl PreCandidate {
         // Step down as a follower if the response indicates an active leader with a term >= local term
         if let Some(leader_id) = util::get_active_leader(&response, ctx.get_current_term(), |received_term, local_term| received_term >= local_term) {
             println!(
-                "Info: Member {} reported active leader {}, stepping down as a follower",
-                member_id, leader_id
+                "Info: Member {} reported active leader {} at term {}, stepping down as a follower",
+                member_id, leader_id, response.term
             );
             return Ok(Some(Err(Follower::new(Some(leader_id)))));
         }
@@ -100,6 +100,7 @@ impl PreCandidate {
         // Check if a quorum of members has granted the pre-vote
         if self.has_pre_vote_quorum() {
             println!("Info: A quorum of pre-votes has been granted, transitioning to leader candidate");
+
             // Transition to a leader candidate
             let candidate = Candidate::new();
 
