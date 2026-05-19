@@ -1,7 +1,7 @@
 use crate::{PaxosEvent, PreVoteResponse, PaxosSharedContext};
 use crate::roles::{Candidate, Follower, PaxosRole, util};
 use crate::state_machine::PaxosState;
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 use std::error::Error;
 use std::sync::Arc;
 use tokio::time;
@@ -10,22 +10,26 @@ use uuid::Uuid;
 
 // The state of Paxos group leader pre-candidate - Thread-safe without external locking
 pub struct PreCandidate {
-    // A concurrent map of Paxos group member IDs to their local WAL positions
-    pre_vote_board: DashMap<Uuid, Option<bool>>,
+    // A concurrent map of Paxos group member IDs to their pre-vote responses
+    pre_vote_board: DashMap<Uuid, Option<PreVoteResponse>>,
 
     // The deadline for the pre-vote campaign
     pre_vote_campaign_deadline: Option<time::Instant>,
 }
 
 impl PreCandidate {
-    pub fn new() -> Self {
+    pub fn new(peer_ids: &DashSet<Uuid>) -> Self {
+        let pre_vote_board = DashMap::new();
+        for peer_id in peer_ids.iter() {
+            pre_vote_board.insert(peer_id, None);
+        }
         Self {
-            pre_vote_board: DashMap::new(),
+            pre_vote_board,
             pre_vote_campaign_deadline: None,
         }
     }
-    pub fn update_pre_vote(&self, member_id: Uuid, granted: bool) {
-        self.pre_vote_board.insert(member_id, Some(granted));
+    pub fn update_pre_vote(&self, response: PreVoteResponse) {
+        self.pre_vote_board.insert(response.member_id, Some(response));
     }
 
     // Checks if the pre-candidate has been rejected by a quorum of members for pre-vote
@@ -33,7 +37,7 @@ impl PreCandidate {
         let num_matched = self
             .pre_vote_board
             .iter()
-            .filter(|entry| *entry.value() == Some(false))
+            .filter(|entry| matches!(entry.value(), Some(r) if !r.vote_granted))
             .count();
 
         // + 1 account for the pre-candidate, which is not in the board
@@ -45,11 +49,16 @@ impl PreCandidate {
         let num_matched = self
             .pre_vote_board
             .iter()
-            .filter(|entry| *entry.value() == Some(true))
+            .filter(|entry| matches!(entry.value(), Some(r) if r.vote_granted))
             .count();
 
         // + 1 accounts for the pre-candidate's implicit self-vote, which is not in the board
         (num_matched + 1) >= (self.pre_vote_board.len() + 1) / 2 + 1
+    }
+
+    // Checks if the response indicates an active leader with a term >= local term
+    fn has_active_leader(response: &PreVoteResponse, local_term: u32) -> bool {
+        response.current_leader_id.is_some() && response.term >= local_term
     }
 
     // Checks if the pre-vote campaign has timed out to avoid a potential infinite hang
@@ -79,14 +88,21 @@ impl PreCandidate {
         response: PreVoteResponse,
         ctx: Arc<PaxosSharedContext>,
     ) -> Result<Option<Result<Candidate, Follower>>, Box<dyn Error + Send + Sync>> {
-        let member_id = response.member_id;
-        let granted = response.vote_granted;
+        // Step down as a follower if the response indicates an active leader with a term >= local term
+        if Self::has_active_leader(&response, ctx.get_current_term()) {
+            println!(
+                "Info: Active leader {:?} reported, stepping down as a follower",
+                response.current_leader_id
+            );
+            return Ok(Some(Err(Follower::new(response.current_leader_id))));
+        }
 
         // Keep track of the pre-vote response from the remote member
-        self.update_pre_vote(member_id, granted);
+        self.update_pre_vote(response);
 
         // Check if a quorum of members has granted the pre-vote
         if self.has_pre_vote_quorum() {
+            println!("Info: A quorum of pre-votes has been granted, transitioning to leader candidate");
             // Transition to a leader candidate
             let candidate = Candidate::new();
 
@@ -100,9 +116,8 @@ impl PreCandidate {
 
         // Check if a quorum of members has rejected the pre-vote or the pre-vote campaign has timed out
         if self.has_pre_vote_rejected() || self.has_pre_vote_campaign_timeout() {
-            // Step down as a follower
-            let follower = Follower::new();
-            return Ok(Some(Err(follower)));
+            println!("Warning: A quorum of pre-votes has been rejected or timeout occurred, stepping down as a follower");
+            return Ok(Some(Err(Follower::new(None))));
         }
         Ok(None)
     }
@@ -129,18 +144,8 @@ impl PaxosRole for PreCandidate {
             PaxosEvent::PreVoteResponseReceived(response) => {
                 if let Some(result) = self.handle_pre_vote_response(response, ctx.clone()).await? {
                     return match result {
-                        Ok(candidate) => {
-                            println!(
-                                "Info: A quorum of pre-votes has been granted, transitioned to leader candidate"
-                            );
-                            Ok(PaxosState::Candidate(candidate))
-                        }
-                        Err(follower) => {
-                            println!(
-                                "Warning: A quorum of pre-votes has been rejected or timeout occurred, step down as a follower"
-                            );
-                            Ok(PaxosState::Follower(follower))
-                        }
+                        Ok(candidate) => Ok(PaxosState::Candidate(candidate)),
+                        Err(follower) => Ok(PaxosState::Follower(follower)),
                     };
                 }
                 Ok(PaxosState::PreCandidate(self))

@@ -3,6 +3,7 @@ use crate::context::PaxosSharedContext;
 use crate::roles::{Candidate, Follower, Leader, PaxosRole, PreCandidate};
 use std::error::Error;
 use std::sync::Arc;
+use uuid::Uuid;
 
 // The state of a Paxos group member
 pub enum PaxosState {
@@ -26,8 +27,8 @@ impl PaxosState {
             // Update the current term on this member (node) to the highest term received
             ctx.set_current_term(event_term);
 
-            // Force this member (node) to step down as a follower
-            current_state = PaxosState::Follower(Follower::new());
+            // Force this member (node) to step down as a follower, preserving the known leader if any
+            current_state = PaxosState::Follower(Follower::new(current_state.get_leader_id()));
         }
 
         let next_state = match current_state {
@@ -40,5 +41,12 @@ impl PaxosState {
         };
 
         Ok(next_state)
+    }
+
+    fn get_leader_id(&self) -> Option<Uuid> {
+        match self {
+            PaxosState::Follower(follower) => follower.get_current_leader_id(),
+            _ => None,
+        }
     }
 }

@@ -1,6 +1,7 @@
 use crate::{PaxosDispatcher, PreVoteRequest, VoteRequest};
 use chrono::{DateTime, Utc};
 use spx_lib::true_time::TrueTime;
+use dashmap::DashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use tokio::sync::{Notify, RwLock};
@@ -10,6 +11,9 @@ use uuid::Uuid;
 pub struct PaxosSharedContext {
     // The unique identifier for this member (node)
     member_id: Uuid,
+
+    // The unique identifiers of the other members (nodes) in the Paxos group
+    peer_ids: DashSet<Uuid>,
 
     // The term (ballot) number that this member (node) is currently in
     term: AtomicU32,
@@ -34,9 +38,10 @@ pub struct PaxosSharedContext {
 }
 
 impl PaxosSharedContext {
-    pub fn new(member_id: Uuid, dispatcher: Arc<dyn PaxosDispatcher>) -> Self {
+    pub fn new(member_id: Uuid, peer_ids: DashSet<Uuid>, dispatcher: Arc<dyn PaxosDispatcher>) -> Self {
         Self {
             member_id,
+            peer_ids,
             term: AtomicU32::new(0),
             t_safe: RwLock::new(None),
             last_log_term: AtomicU32::new(0),
@@ -76,6 +81,10 @@ impl PaxosSharedContext {
         self.member_id
     }
 
+    pub fn get_peer_ids(&self) -> &DashSet<Uuid> {
+        &self.peer_ids
+    }
+
     pub fn get_last_log_term(&self) -> u32 {
         self.last_log_term.load(Ordering::SeqCst)
     }
@@ -98,7 +107,7 @@ impl PaxosSharedContext {
         TrueTime::after(expiry)
     }
 
-    pub async fn leader_lease_expired(&self) {
+    pub async fn wait_until_leader_lease_expired(&self) {
         loop {
             let Some(lease) = *self.leader_lease_expiry_time.read().await else {
                 return;

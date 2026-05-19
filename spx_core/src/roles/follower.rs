@@ -1,4 +1,4 @@
-use crate::{PaxosEvent, PreVoteRequest, PreVoteResponse, PaxosSharedContext};
+use crate::{PaxosEvent, PaxosSharedContext, PreVoteRequest, PreVoteResponse};
 use crate::roles::{PaxosRole, PreCandidate};
 use crate::state_machine::PaxosState;
 use spx_lib::count_down_clock::CountDownClock;
@@ -17,9 +17,9 @@ pub struct Follower {
 }
 
 impl Follower {
-    pub fn new() -> Self {
+    pub fn new(current_leader_id: Option<Uuid>) -> Self {
         Self {
-            current_leader_id: None,
+            current_leader_id,
             cd_clock: CountDownClock::new(1000),
         }
     }
@@ -39,7 +39,7 @@ impl Follower {
         self.cd_clock.start().await;
 
         // Count-down passed, transition to a leader pre-candidate
-        let mut pre_candidate = PreCandidate::new();
+        let mut pre_candidate = PreCandidate::new(ctx.get_peer_ids());
 
         // Dispatch pre-vote requests to other members to qualify to become a leader candidate
         pre_candidate.dispatch_pre_vote(ctx).await?;
@@ -114,6 +114,14 @@ impl Follower {
             member_last_log_slot: None,
         }
     }
+
+    fn handle_pre_vote_response(&mut self, response: PreVoteResponse, ctx: &PaxosSharedContext) {
+        if let Some(leader_id) = response.current_leader_id {
+            if response.term >= ctx.get_current_term() {
+                self.update_current_leader_id(leader_id);
+            }
+        }
+    }
 }
 
 #[async_trait]
@@ -138,8 +146,8 @@ impl PaxosRole for Follower {
                 pre_vote_command.send(response)?;
                 Ok(PaxosState::Follower(self))
             }
-            PaxosEvent::PreVoteResponseReceived(_) => {
-                eprint!("Error: Received an unexpected pre-vote response as a follower");
+            PaxosEvent::PreVoteResponseReceived(response) => {
+                self.handle_pre_vote_response(response, &ctx);
                 Ok(PaxosState::Follower(self))
             }
         }

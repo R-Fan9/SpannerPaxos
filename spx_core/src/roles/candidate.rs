@@ -1,6 +1,6 @@
-use crate::roles::{PaxosRole, util};
+use crate::roles::{Follower, PaxosRole, util};
 use crate::state_machine::PaxosState;
-use crate::{PaxosEvent, PaxosSharedContext};
+use crate::{PaxosEvent, PaxosSharedContext, PreVoteResponse};
 use std::error::Error;
 use std::sync::Arc;
 use tonic::async_trait;
@@ -10,6 +10,22 @@ pub struct Candidate {}
 impl Candidate {
     pub fn new() -> Self {
         Self {}
+    }
+
+    fn handle_pre_vote_response(
+        response: PreVoteResponse,
+        ctx: &PaxosSharedContext,
+    ) -> Option<Follower> {
+        if let Some(leader_id) = response.current_leader_id {
+            if response.term > ctx.get_current_term() {
+                println!(
+                    "Info: Active leader {:?} detected, stepping down as a follower",
+                    leader_id
+                );
+                return Some(Follower::new(Some(leader_id)));
+            }
+        }
+        None
     }
 
     pub async fn dispatch_vote(
@@ -43,8 +59,10 @@ impl PaxosRole for Candidate {
                 pre_vote_command.send(response)?;
                 Ok(PaxosState::Candidate(self))
             }
-            PaxosEvent::PreVoteResponseReceived(_) => {
-                eprint!("Error: Received an unexpected pre-vote response as a candidate");
+            PaxosEvent::PreVoteResponseReceived(response) => {
+                if let Some(follower) = Self::handle_pre_vote_response(response, &ctx) {
+                    return Ok(PaxosState::Follower(follower));
+                }
                 Ok(PaxosState::Candidate(self))
             }
         }

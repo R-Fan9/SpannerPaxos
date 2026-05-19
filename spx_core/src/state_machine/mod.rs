@@ -1,6 +1,7 @@
 use crate::PaxosDispatcher;
 use crate::roles::Follower;
 use crate::{PaxosEvent, PaxosSharedContext};
+use dashmap::DashSet;
 use spx_lib::worker_runner::Worker;
 use std::error::Error;
 use std::sync::Arc;
@@ -23,10 +24,11 @@ pub struct PaxosStateMachine {
 impl PaxosStateMachine {
     pub fn new(
         member_id: Uuid,
+        peer_ids: DashSet<Uuid>,
         dispatcher: Arc<dyn PaxosDispatcher>,
         event_rx: Receiver<PaxosEvent>,
     ) -> Self {
-        let ctx = PaxosSharedContext::new(member_id, dispatcher);
+        let ctx = PaxosSharedContext::new(member_id, peer_ids, dispatcher);
         Self {
             event_rx: Mutex::new(event_rx),
             ctx: Arc::new(ctx),
@@ -38,7 +40,7 @@ impl PaxosStateMachine {
         cancellation_token: CancellationToken,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         // Start as a follower
-        let mut current_state = PaxosState::Follower(Follower::new());
+        let mut current_state = PaxosState::Follower(Follower::new(None));
 
         // Start the Paxos state machine loop
         let mut event_rx = self.event_rx.lock().await;
@@ -53,7 +55,7 @@ impl PaxosStateMachine {
                 }
 
                 // Continuously wait for leader lease expiration
-                _ = self.ctx.leader_lease_expired() => {
+                _ = self.ctx.wait_until_leader_lease_expired() => {
                         current_state = current_state.process_event(PaxosEvent::LeaderLeaseExpired, self.ctx.clone())
                         .await
                         .expect("Failed to process leader lease expiration");
