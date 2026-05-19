@@ -1,4 +1,4 @@
-use crate::{PaxosCommand, PreVoteRequest, PreVoteResponse};
+use crate::{PaxosCommand, PreVoteRequest, PreVoteResponse, VoteRequest, VoteResponse};
 use std::fmt;
 
 pub enum PaxosEvent {
@@ -9,6 +9,9 @@ pub enum PaxosEvent {
 
     // This leader pre-candidate has received a pre-vote response from another member
     PreVoteResponseReceived(PreVoteResponse),
+
+    // This member has received a vote request from a leader candidate
+    VoteRequestReceived(PaxosCommand<VoteRequest, VoteResponse>),
 }
 
 impl PaxosEvent {

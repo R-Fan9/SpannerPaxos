@@ -1,4 +1,4 @@
-use crate::{PaxosDispatcher, PreVoteRequest, VoteRequest};
+use crate::{LogEntry, PaxosDispatcher, PreVoteRequest, VoteRequest};
 use chrono::{DateTime, Utc};
 use spx_lib::true_time::TrueTime;
 use dashmap::DashSet;
@@ -33,6 +33,9 @@ pub struct PaxosSharedContext {
     // A notification channel to notify the update of the leader lease
     leader_lease_update_notify: Notify,
 
+    // The log entries that have been persisted but not yet committed by this member (node)
+    uncommitted_entries: RwLock<Vec<LogEntry>>,
+
     // The dispatcher for dispatching Paxos requests to other Paxos members
     dispatcher: Arc<dyn PaxosDispatcher>,
 }
@@ -48,6 +51,7 @@ impl PaxosSharedContext {
             last_log_slot: AtomicU32::new(0),
             leader_lease_expiry_time: RwLock::new(None),
             leader_lease_update_notify: Notify::new(),
+            uncommitted_entries: RwLock::new(Vec::new()),
             dispatcher,
         }
     }
@@ -90,6 +94,10 @@ impl PaxosSharedContext {
     }
     pub fn get_last_log_slot(&self) -> u32 {
         self.last_log_slot.load(Ordering::SeqCst)
+    }
+
+    pub async fn get_uncommitted_entries(&self) -> Vec<LogEntry> {
+        self.uncommitted_entries.read().await.clone()
     }
 
     pub async fn update_leader_lease_expiry_time(&self, expiry: DateTime<Utc>) {

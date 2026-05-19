@@ -5,11 +5,10 @@ use uuid::Uuid;
 // Returns the active leader ID from the response if its term satisfies the given condition
 pub(super) fn get_active_leader(
     response: &PreVoteResponse,
-    local_term: u32,
-    term_condition: impl Fn(u32, u32) -> bool,
+    term_condition: impl Fn(u32) -> bool,
 ) -> Option<Uuid> {
     let leader_id = response.current_leader_id?;
-    if term_condition(response.term, local_term) {
+    if term_condition(response.term) {
         Some(leader_id)
     } else {
         None

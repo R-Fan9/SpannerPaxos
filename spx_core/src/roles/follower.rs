@@ -1,4 +1,4 @@
-use crate::{PaxosEvent, PaxosSharedContext, PreVoteRequest, PreVoteResponse};
+use crate::{PaxosEvent, PaxosSharedContext, PreVoteRequest, PreVoteResponse, VoteRequest, VoteResponse, VoteOutcome, VotePromise, VoteRejection};
 use crate::roles::{PaxosRole, PreCandidate, util};
 use crate::state_machine::PaxosState;
 use spx_lib::count_down_clock::CountDownClock;
@@ -12,6 +12,9 @@ pub struct Follower {
     // The unique identifier of the leader that the follower is currently following
     current_leader_id: Option<Uuid>,
 
+    // The candidate this follower has voted for in the current term, keyed by (term, candidate_id)
+    voted_for_id: Option<(u32, Uuid)>,
+
     // A count-down clock used to randomize the time between follower nodes to start leader election process
     cd_clock: CountDownClock,
 }
@@ -20,6 +23,7 @@ impl Follower {
     pub fn new(current_leader_id: Option<Uuid>) -> Self {
         Self {
             current_leader_id,
+            voted_for_id: None,
             cd_clock: CountDownClock::new(1000),
         }
     }
@@ -115,8 +119,107 @@ impl Follower {
         }
     }
 
+    async fn handle_vote_request(
+        &mut self,
+        request: VoteRequest,
+        ctx: Arc<PaxosSharedContext>,
+    ) -> VoteResponse {
+        let current_term = ctx.get_current_term();
+        let current_member_id = ctx.get_current_member_id();
+        let current_leader_id = self.current_leader_id;
+
+        // Reject if this follower has already granted a vote in a term >= the requested term
+        if let Some((voted_term, voted_id)) = self.voted_for_id {
+            if voted_term >= request.next_term {
+                return VoteResponse {
+                    member_id: current_member_id,
+                    term: current_term,
+                    outcome: VoteOutcome::Rejection(VoteRejection {
+                        current_leader_id: None,
+                        member_last_log_term: None,
+                        member_last_log_slot: None,
+                        voted_for_id: Some(voted_id),
+                    }),
+                };
+            }
+        }
+
+        // Reject if the leader lease has not expired yet
+        if !ctx.is_leader_lease_expired().await {
+            return VoteResponse {
+                member_id: current_member_id,
+                term: current_term,
+                outcome: VoteOutcome::Rejection(VoteRejection {
+                    current_leader_id,
+                    member_last_log_term: None,
+                    member_last_log_slot: None,
+                    voted_for_id: None,
+                }),
+            };
+        }
+
+        // Reject if the proposed term number is less than or equal to the current term number
+        if request.next_term <= current_term {
+            return VoteResponse {
+                member_id: current_member_id,
+                term: current_term,
+                outcome: VoteOutcome::Rejection(VoteRejection {
+                    current_leader_id: None,
+                    member_last_log_term: None,
+                    member_last_log_slot: None,
+                    voted_for_id: None,
+                }),
+            };
+        }
+
+        // Reject if the term number of the last log entry persisted by the candidate is lower than the term number of the last log persisted by the current member (node)
+        let current_last_log_term = ctx.get_last_log_term();
+        if request.last_log_term < current_last_log_term {
+            return VoteResponse {
+                member_id: current_member_id,
+                term: current_term,
+                outcome: VoteOutcome::Rejection(VoteRejection {
+                    current_leader_id: None,
+                    member_last_log_term: Some(current_last_log_term),
+                    member_last_log_slot: None,
+                    voted_for_id: None,
+                }),
+            };
+        }
+
+        // Reject if the slot number of the last log entry persisted by the candidate is lower than the slot number of the last log persisted by the current member (node)
+        let current_last_log_slot = ctx.get_last_log_slot();
+        if request.last_log_slot < current_last_log_slot {
+            return VoteResponse {
+                member_id: current_member_id,
+                term: current_term,
+                outcome: VoteOutcome::Rejection(VoteRejection {
+                    current_leader_id: None,
+                    member_last_log_term: Some(current_last_log_term),
+                    member_last_log_slot: Some(current_last_log_slot),
+                    voted_for_id: None,
+                }),
+            };
+        }
+
+        // Record the vote for this candidate in the current term
+        self.voted_for_id = Some((request.next_term, request.member_id));
+
+        // Reset the count-down clock to suppress spurious leader elections while a candidate is active
+        self.cd_clock.reset();
+
+        VoteResponse {
+            member_id: current_member_id,
+            term: current_term,
+            outcome: VoteOutcome::Promise(VotePromise {
+                last_log_slot: current_last_log_slot,
+                uncommitted_entries: ctx.get_uncommitted_entries().await,
+            }),
+        }
+    }
+
     fn handle_pre_vote_response(&mut self, response: PreVoteResponse, ctx: &PaxosSharedContext) {
-        let Some(leader_id) = util::get_active_leader(&response, ctx.get_current_term(), |received_term, local_term| received_term >= local_term) else {
+        let Some(leader_id) = util::get_active_leader(&response, |received_term| received_term >= ctx.get_current_term()) else {
             return;
         };
         println!(
@@ -152,6 +255,13 @@ impl PaxosRole for Follower {
             PaxosEvent::PreVoteResponseReceived(response) => {
                 self.handle_pre_vote_response(response, &ctx);
                 Ok(PaxosState::Follower(self))
+            }
+            PaxosEvent::VoteRequestReceived(vote_command) => {
+                let request = vote_command.get_request();
+                let mut follower = self;
+                let response = follower.handle_vote_request(request, ctx.clone()).await;
+                vote_command.send(response)?;
+                Ok(PaxosState::Follower(follower))
             }
         }
     }

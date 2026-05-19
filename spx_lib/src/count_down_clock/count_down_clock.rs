@@ -27,6 +27,10 @@ impl CountDownClock {
         self.started.load(Ordering::Acquire)
     }
 
+    pub fn reset(&self) {
+        self.started.store(false, Ordering::Release);
+    }
+
     pub async fn start(&self) {
         // Atomically claim the started slot, only the first caller proceeds, all others skip
         // Note: AcqRel ensures this thread sees the freshest 'started' value (Acquire) and,

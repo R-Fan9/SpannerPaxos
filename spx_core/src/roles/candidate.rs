@@ -30,7 +30,9 @@ impl Candidate {
         response: PreVoteResponse,
         ctx: &PaxosSharedContext,
     ) -> Option<Follower> {
-        let leader_id = util::get_active_leader(&response, ctx.get_current_term(), |received_term, local_term| received_term > local_term)?;
+        let leader_id = util::get_active_leader(&response, |received_term| received_term > ctx.get_current_term())?;
+
+        // Step down as a follower if the response indicates an active leader with a term strictly greater than the local term
         println!(
             "Info: Member {} reported active leader {} at term {}, stepping down as a follower",
             response.member_id, leader_id, response.term
@@ -51,10 +53,10 @@ impl PaxosRole for Candidate {
                 // The candidate is already in a leader election process, ignore leader lease expiration event
                 Ok(PaxosState::Candidate(self))
             }
-            PaxosEvent::PreVoteRequestReceived(pre_vote_command) => {
-                let request = pre_vote_command.get_request();
+            PaxosEvent::PreVoteRequestReceived(command) => {
+                let request = command.get_request();
                 let response = util::handle_pre_vote_request(request, ctx.clone());
-                pre_vote_command.send(response)?;
+                command.send(response)?;
                 Ok(PaxosState::Candidate(self))
             }
             PaxosEvent::PreVoteResponseReceived(response) => {
