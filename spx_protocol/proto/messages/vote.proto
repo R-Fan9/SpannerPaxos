@@ -17,19 +17,21 @@ message RequestVoteRequest {
 }
 
 message RequestVoteResponse {
-    // The receiver's current term is always required, regardless of the outcome
     uint32 term = 1;
+
+    // The ID of the member who responded to the vote request
+    string member_id = 2;
 
     // The outcome determines the payload
     oneof outcome {
-        Promise promise = 2;
-        Rejection rejection = 3;
+        Promise promise = 3;
+        Rejection rejection = 4;
     }
 }
 
 message Promise {
     // The slot number of the last log entry the member persisted, needed for score board construction
-    uint32 last_log_index = 1;
+    uint32 last_log_slot = 1;
 
     // Any log entries the follower has not committed, the newly elected leader must process these entries first
     repeated LogEntry uncommitted_entries = 2;
@@ -44,7 +46,7 @@ message Rejection {
     optional uint32 member_last_log_term = 2;
 
     // Provides a catch-up hint telling the Candidate how far behind its logs are compared to this Follower.
-    optional uint32 member_last_log_index = 3;
+    optional uint32 member_last_log_slot = 3;
 
     // Informs the Candidate that it lost the race because this Follower already voted for someone else this term.
     optional uint32 voted_for_id = 4;
@@ -54,8 +56,8 @@ message LogEntry {
     // The term number when the leader originally proposed this write
     uint32 term = 1;
 
-    // The slot number (or index) of this entry in the append-only log
-    uint32 index = 2;
+    // The slot number of this entry in the append-only log
+    uint32 slot = 2;
 
     // The actual database command/mutation (usually serialized bytes)
     string entry = 3;

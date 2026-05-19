@@ -1,5 +1,5 @@
 use crate::{PaxosEvent, PaxosSharedContext, PreVoteRequest, PreVoteResponse};
-use crate::roles::{PaxosRole, PreCandidate};
+use crate::roles::{PaxosRole, PreCandidate, util};
 use crate::state_machine::PaxosState;
 use spx_lib::count_down_clock::CountDownClock;
 use std::error::Error;
@@ -116,11 +116,14 @@ impl Follower {
     }
 
     fn handle_pre_vote_response(&mut self, response: PreVoteResponse, ctx: &PaxosSharedContext) {
-        if let Some(leader_id) = response.current_leader_id {
-            if response.term >= ctx.get_current_term() {
-                self.update_current_leader_id(leader_id);
-            }
-        }
+        let Some(leader_id) = util::get_active_leader(&response, ctx.get_current_term(), |received_term, local_term| received_term >= local_term) else {
+            return;
+        };
+        println!(
+            "Info: Member {} reported active leader {}, updating known leader",
+            response.member_id, leader_id
+        );
+        self.update_current_leader_id(leader_id);
     }
 }
 

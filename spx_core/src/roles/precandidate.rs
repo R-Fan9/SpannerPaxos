@@ -56,11 +56,6 @@ impl PreCandidate {
         (num_matched + 1) >= (self.pre_vote_board.len() + 1) / 2 + 1
     }
 
-    // Checks if the response indicates an active leader with a term >= local term
-    fn has_active_leader(response: &PreVoteResponse, local_term: u32) -> bool {
-        response.current_leader_id.is_some() && response.term >= local_term
-    }
-
     // Checks if the pre-vote campaign has timed out to avoid a potential infinite hang
     fn has_pre_vote_campaign_timeout(&self) -> bool {
         self.pre_vote_campaign_deadline.is_some()
@@ -88,13 +83,15 @@ impl PreCandidate {
         response: PreVoteResponse,
         ctx: Arc<PaxosSharedContext>,
     ) -> Result<Option<Result<Candidate, Follower>>, Box<dyn Error + Send + Sync>> {
+        let member_id = response.member_id;
+
         // Step down as a follower if the response indicates an active leader with a term >= local term
-        if Self::has_active_leader(&response, ctx.get_current_term()) {
+        if let Some(leader_id) = util::get_active_leader(&response, ctx.get_current_term(), |received_term, local_term| received_term >= local_term) {
             println!(
-                "Info: Active leader {:?} reported, stepping down as a follower",
-                response.current_leader_id
+                "Info: Member {} reported active leader {}, stepping down as a follower",
+                member_id, leader_id
             );
-            return Ok(Some(Err(Follower::new(response.current_leader_id))));
+            return Ok(Some(Err(Follower::new(Some(leader_id)))));
         }
 
         // Keep track of the pre-vote response from the remote member

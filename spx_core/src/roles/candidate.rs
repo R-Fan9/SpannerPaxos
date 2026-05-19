@@ -16,16 +16,12 @@ impl Candidate {
         response: PreVoteResponse,
         ctx: &PaxosSharedContext,
     ) -> Option<Follower> {
-        if let Some(leader_id) = response.current_leader_id {
-            if response.term > ctx.get_current_term() {
-                println!(
-                    "Info: Active leader {:?} detected, stepping down as a follower",
-                    leader_id
-                );
-                return Some(Follower::new(Some(leader_id)));
-            }
-        }
-        None
+        let leader_id = util::get_active_leader(&response, ctx.get_current_term(), |received_term, local_term| received_term > local_term)?;
+        println!(
+            "Info: Member {} reported active leader {}, stepping down as a follower",
+            response.member_id, leader_id
+        );
+        Some(Follower::new(Some(leader_id)))
     }
 
     pub async fn dispatch_vote(
