@@ -30,11 +30,14 @@ message RequestVoteResponse {
 }
 
 message Promise {
+    // The term number of the last log entry the member persisted, needed for score board construction
+    uint32 last_log_term = 1;
+
     // The slot number of the last log entry the member persisted, needed for score board construction
-    uint32 last_log_slot = 1;
+    uint32 last_log_slot = 2;
 
     // Any log entries the follower has not committed, the newly elected leader must process these entries first
-    repeated LogEntry uncommitted_entries = 2;
+    repeated LogEntry uncommitted_entries = 3;
 }
 
 message Rejection {

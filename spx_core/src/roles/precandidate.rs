@@ -84,7 +84,7 @@ impl PreCandidate {
         ctx: Arc<PaxosSharedContext>,
     ) -> Result<Option<Result<Candidate, Follower>>, Box<dyn Error + Send + Sync>> {
         // Step down as a follower if the response indicates an active leader with a term >= local term
-        if let Some(leader_id) = util::get_active_leader(&response, |received_term| received_term >= ctx.get_current_term()) {
+        if let Some(leader_id) = response.try_get_leader(|received_term| received_term >= ctx.get_current_term()) {
             println!(
                 "Info: Member {} reported active leader {} at term {}, stepping down as a follower",
                 member_id, leader_id, response.term
@@ -100,7 +100,7 @@ impl PreCandidate {
             println!("Info: A quorum of pre-votes has been granted, transitioning to leader candidate");
 
             // Transition to a leader candidate
-            let candidate = Candidate::new();
+            let candidate = Candidate::new(ctx.get_peer_ids());
 
             // Increment the current term number
             ctx.increment_current_term();

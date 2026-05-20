@@ -43,6 +43,10 @@ impl Follower {
         self.cd_clock.start().await;
 
         // Count-down passed, transition to a leader pre-candidate
+        println!(
+            "Info: Follower {} count-down clock reached zero, transitioning to pre-candidate",
+            ctx.get_current_member_id()
+        );
         let mut pre_candidate = PreCandidate::new(ctx.get_peer_ids());
 
         // Dispatch pre-vote requests to other members to qualify to become a leader candidate
@@ -135,7 +139,7 @@ impl Follower {
                     member_id: current_member_id,
                     term: current_term,
                     outcome: VoteOutcome::Rejection(VoteRejection {
-                        current_leader_id: None,
+                        current_leader_id,
                         member_last_log_term: None,
                         member_last_log_slot: None,
                         voted_for_id: Some(voted_id),
@@ -164,7 +168,7 @@ impl Follower {
                 member_id: current_member_id,
                 term: current_term,
                 outcome: VoteOutcome::Rejection(VoteRejection {
-                    current_leader_id: None,
+                    current_leader_id,
                     member_last_log_term: None,
                     member_last_log_slot: None,
                     voted_for_id: None,
@@ -179,7 +183,7 @@ impl Follower {
                 member_id: current_member_id,
                 term: current_term,
                 outcome: VoteOutcome::Rejection(VoteRejection {
-                    current_leader_id: None,
+                    current_leader_id,
                     member_last_log_term: Some(current_last_log_term),
                     member_last_log_slot: None,
                     voted_for_id: None,
@@ -194,7 +198,7 @@ impl Follower {
                 member_id: current_member_id,
                 term: current_term,
                 outcome: VoteOutcome::Rejection(VoteRejection {
-                    current_leader_id: None,
+                    current_leader_id,
                     member_last_log_term: Some(current_last_log_term),
                     member_last_log_slot: Some(current_last_log_slot),
                     voted_for_id: None,
@@ -212,6 +216,7 @@ impl Follower {
             member_id: current_member_id,
             term: current_term,
             outcome: VoteOutcome::Promise(VotePromise {
+                last_log_term: current_last_log_term,
                 last_log_slot: current_last_log_slot,
                 uncommitted_entries: ctx.get_uncommitted_entries().await,
             }),
@@ -219,7 +224,7 @@ impl Follower {
     }
 
     fn handle_pre_vote_response(&mut self, response: PreVoteResponse, ctx: &PaxosSharedContext) {
-        let Some(leader_id) = util::get_active_leader(&response, |received_term| received_term >= ctx.get_current_term()) else {
+        let Some(leader_id) = response.try_get_leader(|received_term| received_term >= ctx.get_current_term()) else {
             return;
         };
         println!(

@@ -20,6 +20,21 @@ pub struct VoteResponse {
     pub outcome: VoteOutcome,
 }
 
+impl VoteResponse {
+    // Returns the reported leader ID from a rejection if its term satisfies the given condition
+    pub fn try_get_leader(&self, term_condition: impl Fn(u32) -> bool) -> Option<Uuid> {
+        let VoteOutcome::Rejection(rejection) = &self.outcome else {
+            return None;
+        };
+        let leader_id = rejection.current_leader_id?;
+        if term_condition(self.term) {
+            Some(leader_id)
+        } else {
+            None
+        }
+    }
+}
+
 #[derive(Clone)]
 pub enum VoteOutcome {
     Promise(VotePromise),
@@ -28,6 +43,9 @@ pub enum VoteOutcome {
 
 #[derive(Clone)]
 pub struct VotePromise {
+    // The term number of the last log entry the member persisted, needed for score board construction
+    pub last_log_term: u32,
+
     // The slot number of the last log entry the member persisted, needed for score board construction
     pub last_log_slot: u32,
 

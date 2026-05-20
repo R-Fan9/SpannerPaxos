@@ -36,6 +36,13 @@ pub struct Leader {
 }
 
 impl Leader {
+    pub fn new() -> Self {
+        Self {
+            commit_index: AtomicU32::new(0),
+            score_board: DashMap::new(),
+        }
+    }
+
     pub fn get_commit_index(&self) -> u32 {
         self.commit_index.load(Ordering::SeqCst)
     }
