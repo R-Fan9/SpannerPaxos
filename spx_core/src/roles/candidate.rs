@@ -1,8 +1,7 @@
-use crate::roles::{Follower, Leader, PaxosRole, util};
+use crate::roles::{Follower, Leader, LogPosition, PaxosRole, util};
 use crate::state_machine::PaxosState;
 use crate::{LogEntry, PaxosEvent, PaxosSharedContext, PreVoteResponse, VoteOutcome, VoteResponse};
 use dashmap::{DashMap, DashSet};
-use std::collections::HashMap;
 use std::error::Error;
 use std::sync::Arc;
 use tokio::time;
@@ -13,11 +12,11 @@ pub struct Candidate {
     // A concurrent map of member IDs to their vote responses
     vote_board: DashMap<Uuid, Option<VoteResponse>>,
 
-    // Map of member ID to their last known log slot (match index)
-    future_match_index: HashMap<Uuid, u32>,
+    // Map of member ID to their WAL log positions, carried over to Leader on election win
+    score_board: DashMap<Uuid, LogPosition>,
 
-    // Map of log slot to (term, entry) for resolved uncommitted entries
-    resolved_uncommitted_logs: HashMap<u32, (u32, LogEntry)>,
+    // Map of log slot to the winning uncommitted entry, resolved by highest term
+    uncommitted_logs: DashMap<u32, LogEntry>,
 
     // The deadline for the vote campaign
     vote_campaign_deadline: Option<time::Instant>,
@@ -31,92 +30,10 @@ impl Candidate {
         }
         Self {
             vote_board,
-            future_match_index: HashMap::new(),
-            resolved_uncommitted_logs: HashMap::new(),
+            score_board: DashMap::new(),
+            uncommitted_logs: DashMap::new(),
             vote_campaign_deadline: None,
         }
-    }
-
-    pub fn has_vote_quorum(&self) -> bool {
-        let num_matched = self
-            .vote_board
-            .iter()
-            .filter(|entry| matches!(entry.value(), Some(r) if matches!(r.outcome, crate::VoteOutcome::Promise(_))))
-            .count();
-
-        // + 1 accounts for the candidate's implicit self-vote, which is not in the board
-        (num_matched + 1) >= (self.vote_board.len() + 1) / 2 + 1
-    }
-
-    pub fn has_vote_rejected(&self) -> bool {
-        let num_matched = self
-            .vote_board
-            .iter()
-            .filter(|entry| matches!(entry.value(), Some(r) if matches!(r.outcome, crate::VoteOutcome::Rejection(_))))
-            .count();
-
-        // + 1 account for the candidate, which is not in the board
-        num_matched >= (self.vote_board.len() + 1) / 2 + 1
-    }
-
-    pub fn has_vote_campaign_timeout(&self) -> bool {
-        self.vote_campaign_deadline.is_some()
-            && time::Instant::now() > self.vote_campaign_deadline.unwrap()
-    }
-
-    async fn handle_vote_response(
-        &mut self,
-        response: VoteResponse,
-        ctx: Arc<PaxosSharedContext>,
-    ) -> Result<Option<Result<Leader, Follower>>, Box<dyn Error + Send + Sync>> {
-        let member_id = response.member_id;
-
-        // Step down as a follower if the response indicates an active leader with a term strictly greater than the local term
-        if let Some(leader_id) = response.try_get_leader(|received_term| received_term > ctx.get_current_term()) {
-            println!(
-                "Info: Member {} reported active leader {} at term {}, stepping down as a follower",
-                member_id, leader_id, response.term
-            );
-            return Ok(Some(Err(Follower::new(Some(leader_id)))));
-        }
-
-        // Record the vote response
-        self.vote_board.insert(member_id, Some(response.clone()));
-
-        // Process the response to update match index and uncommitted logs
-        if let crate::VoteOutcome::Promise(promise) = &response.outcome {
-            // History fingerprint check
-            let trusted_match_slot = if promise.last_log_term == ctx.get_last_log_term() {
-                promise.last_log_slot
-            } else {
-                0 // History diverged. Force a full sync later.
-            };
-            self.future_match_index.insert(member_id, trusted_match_slot);
-
-            // Merge uncommitted conflicts ("Highest Term Wins")
-            for entry in &promise.uncommitted_entries {
-                if let Some((existing_term, _)) = self.resolved_uncommitted_logs.get(&entry.slot) {
-                    if entry.term > *existing_term {
-                        self.resolved_uncommitted_logs.insert(entry.slot, (entry.term, entry.clone()));
-                    }
-                } else {
-                    self.resolved_uncommitted_logs.insert(entry.slot, (entry.term, entry.clone()));
-                }
-            }
-        }
-
-        // Check if a quorum of members has granted votes
-        if self.has_vote_quorum() {
-            println!("Info: A quorum of votes has been granted, transitioning to leader");
-            return Ok(Some(Ok(Leader::new())));
-        }
-
-        // Check if a quorum of members has rejected votes or the vote campaign has timed out
-        if self.has_vote_rejected() || self.has_vote_campaign_timeout() {
-            println!("Warning: A quorum of votes has been rejected or timeout occurred, stepping down as a follower");
-            return Ok(Some(Err(Follower::new(None))));
-        }
-        Ok(None)
     }
 
     pub async fn dispatch_vote(
@@ -131,19 +48,95 @@ impl Candidate {
         todo!()
     }
 
-    fn handle_pre_vote_response(
-        &self,
-        response: PreVoteResponse,
-        ctx: &PaxosSharedContext,
-    ) -> Option<Follower> {
-        let leader_id = response.try_get_leader(|received_term| received_term > ctx.get_current_term())?;
+    fn handle_pre_vote_response(&self, response: PreVoteResponse) {
+        if response.vote_granted {
+            println!(
+                "Info: Member {} granted pre-vote at term {}",
+                response.member_id, response.term
+            );
+        } else {
+            println!(
+                "Info: Member {} rejected pre-vote: {}",
+                response.member_id,
+                response.rejection_reason()
+            );
+        }
+    }
 
-        // Step down as a follower if the response indicates an active leader with a term strictly greater than the local term
-        println!(
-            "Info: Member {} reported active leader {} at term {}, stepping down as a follower",
-            response.member_id, leader_id, response.term
-        );
-        Some(Follower::new(Some(leader_id)))
+    async fn handle_vote_response(
+        &mut self,
+        response: VoteResponse,
+        ctx: Arc<PaxosSharedContext>,
+    ) -> Result<Option<Result<Leader, Follower>>, Box<dyn Error + Send + Sync>> {
+        let member_id = response.member_id;
+
+        // Return early on rejection and wait for other responses
+        if let VoteOutcome::Rejection(rejection) = &response.outcome {
+            println!(
+                "Info: Member {} rejected vote: {}",
+                member_id,
+                rejection.rejection_reason(response.term)
+            );
+            return Ok(None);
+        }
+
+        // Record and process the promised vote
+        self.vote_board.insert(member_id, Some(response.clone()));
+
+        if let VoteOutcome::Promise(promise) = &response.outcome {
+            // History fingerprint check
+            let trusted_match_slot = if promise.last_log_term == ctx.get_last_log_term() {
+                promise.last_log_slot
+            } else {
+                0 // History diverged. Force a full sync later.
+            };
+            self.score_board
+                .insert(member_id, LogPosition::from_match_slot(trusted_match_slot));
+
+            self.merge_uncommitted_entries(&promise.uncommitted_entries);
+        }
+
+        // Check if a quorum of members has granted votes
+        if self.has_vote_quorum() {
+            println!("Info: A quorum of votes has been granted, transitioning to leader");
+            let score_board = std::mem::take(&mut self.score_board);
+            return Ok(Some(Ok(Leader::from_candidate(score_board))));
+        }
+
+        // Check if the vote campaign has timed out
+        if self.has_vote_campaign_timeout() {
+            println!("Warning: Vote campaign timeout occurred, stepping down as a follower");
+            return Ok(Some(Err(Follower::new(None))));
+        }
+        Ok(None)
+    }
+
+    fn has_vote_quorum(&self) -> bool {
+        let num_matched = self
+            .vote_board
+            .iter()
+            .filter(|entry| matches!(entry.value(), Some(r) if matches!(r.outcome, crate::VoteOutcome::Promise(_))))
+            .count();
+
+        // + 1 accounts for the candidate's implicit self-vote, which is not in the board
+        (num_matched + 1) >= (self.vote_board.len() + 1) / 2 + 1
+    }
+
+    fn has_vote_campaign_timeout(&self) -> bool {
+        self.vote_campaign_deadline.is_some()
+            && time::Instant::now() > self.vote_campaign_deadline.unwrap()
+    }
+
+    fn merge_uncommitted_entries(&self, entries: &[LogEntry]) {
+        for entry in entries {
+            let should_insert = self
+                .uncommitted_logs
+                .get(&entry.slot)
+                .map_or(true, |existing| entry.term > existing.term);
+            if should_insert {
+                self.uncommitted_logs.insert(entry.slot, entry.clone());
+            }
+        }
     }
 }
 
@@ -166,10 +159,11 @@ impl PaxosRole for Candidate {
                 Ok(PaxosState::Candidate(self))
             }
             PaxosEvent::PreVoteResponseReceived(response) => {
-                if let Some(follower) = self.handle_pre_vote_response(response, &ctx) {
-                    return Ok(PaxosState::Follower(follower));
-                }
+                self.handle_pre_vote_response(response);
                 Ok(PaxosState::Candidate(self))
+            }
+            PaxosEvent::VoteRequestReceived(_) => {
+                todo!()
             }
             PaxosEvent::VoteResponseReceived(response) => {
                 if let Some(result) = self.handle_vote_response(response, ctx.clone()).await? {

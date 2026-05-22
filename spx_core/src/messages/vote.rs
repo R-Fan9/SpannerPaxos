@@ -68,6 +68,25 @@ pub struct VoteRejection {
     pub voted_for_id: Option<Uuid>,
 }
 
+impl VoteRejection {
+    pub fn rejection_reason(&self, term: u32) -> String {
+        let mut reasons = Vec::new();
+        reasons.push(format!("term {}", term));
+        if let Some(leader_id) = self.current_leader_id {
+            reasons.push(format!("active leader {}", leader_id));
+        }
+        if self.member_last_log_term.is_some() || self.member_last_log_slot.is_some() {
+            let log_term = self.member_last_log_term.map_or("?".to_string(), |t| t.to_string());
+            let log_slot = self.member_last_log_slot.map_or("?".to_string(), |s| s.to_string());
+            reasons.push(format!("log ahead (term={}, slot={})", log_term, log_slot));
+        }
+        if let Some(voted_for) = self.voted_for_id {
+            reasons.push(format!("already voted for {}", voted_for));
+        }
+        reasons.join(", ")
+    }
+}
+
 #[derive(Clone)]
 pub struct LogEntry {
     // The term number when the leader originally proposed this write

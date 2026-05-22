@@ -28,4 +28,18 @@ impl PreVoteResponse {
             None
         }
     }
+
+    pub fn rejection_reason(&self) -> String {
+        let mut reasons = Vec::new();
+        reasons.push(format!("term {}", self.term));
+        if let Some(leader_id) = self.current_leader_id {
+            reasons.push(format!("active leader {}", leader_id));
+        }
+        if self.member_last_log_term.is_some() || self.member_last_log_slot.is_some() {
+            let log_term = self.member_last_log_term.map_or("?".to_string(), |t| t.to_string());
+            let log_slot = self.member_last_log_slot.map_or("?".to_string(), |s| s.to_string());
+            reasons.push(format!("log ahead (term={}, slot={})", log_term, log_slot));
+        }
+        reasons.join(", ")
+    }
 }

@@ -1,5 +1,6 @@
 use crate::{PaxosEvent, PaxosSharedContext};
 use crate::roles::PaxosRole;
+use crate::roles::log_position::LogPosition;
 use crate::state_machine::PaxosState;
 use dashmap::DashMap;
 use std::error::Error;
@@ -7,24 +8,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use tonic::async_trait;
 use uuid::Uuid;
-
-// A struct that tracks a Paxos group member's local WAL log positions
-struct LogPosition {
-    // The index of the last log entry that has been persisted to the member's local WAL
-    match_index: AtomicU32,
-
-    // The index of the next log entry to be persisted to the member's local WAL
-    next_index: AtomicU32,
-}
-
-impl LogPosition {
-    pub fn new() -> Self {
-        Self {
-            match_index: AtomicU32::new(0),
-            next_index: AtomicU32::new(0),
-        }
-    }
-}
 
 // The state of Paxos group leader
 pub struct Leader {
@@ -43,6 +26,13 @@ impl Leader {
         }
     }
 
+    pub fn from_candidate(score_board: DashMap<Uuid, LogPosition>) -> Self {
+        Self {
+            commit_index: AtomicU32::new(0),
+            score_board,
+        }
+    }
+
     pub fn get_commit_index(&self) -> u32 {
         self.commit_index.load(Ordering::SeqCst)
     }
@@ -51,15 +41,14 @@ impl Leader {
         self.score_board
             .entry(member_id)
             .or_insert_with(LogPosition::new)
-            .next_index
-            .load(Ordering::SeqCst)
+            .get_next_index()
     }
 
     pub fn has_quorum(&self, slot_number: u32) -> bool {
         let num_matched = self
             .score_board
             .iter()
-            .filter(|entry| entry.value().match_index.load(Ordering::SeqCst) >= slot_number)
+            .filter(|entry| entry.value().get_match_index() >= slot_number)
             .count();
 
         num_matched >= (self.score_board.len() / 2 + 1)

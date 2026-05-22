@@ -12,6 +12,9 @@ pub enum PaxosEvent {
 
     // This member has received a vote request from a leader candidate
     VoteRequestReceived(PaxosCommand<VoteRequest, VoteResponse>),
+
+    // This leader candidate has received a vote response from another member
+    VoteResponseReceived(VoteResponse),
 }
 
 impl PaxosEvent {

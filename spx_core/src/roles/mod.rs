@@ -7,12 +7,14 @@ use tonic::async_trait;
 mod candidate;
 mod follower;
 mod leader;
+mod log_position;
 mod precandidate;
 mod util;
 
 pub use candidate::Candidate;
 pub use follower::Follower;
 pub use leader::Leader;
+pub use log_position::LogPosition;
 pub use precandidate::PreCandidate;
 
 /// A trait defining the methods that a Paxos group member must implement

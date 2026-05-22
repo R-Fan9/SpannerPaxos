@@ -1,6 +1,9 @@
-use crate::{PaxosEvent, PaxosSharedContext, PreVoteRequest, PreVoteResponse, VoteRequest, VoteResponse, VoteOutcome, VotePromise, VoteRejection};
 use crate::roles::{PaxosRole, PreCandidate, util};
 use crate::state_machine::PaxosState;
+use crate::{
+    PaxosEvent, PaxosSharedContext, PreVoteRequest, PreVoteResponse, VoteOutcome, VotePromise,
+    VoteRejection, VoteRequest, VoteResponse,
+};
 use spx_lib::count_down_clock::CountDownClock;
 use std::error::Error;
 use std::sync::Arc;
@@ -224,7 +227,9 @@ impl Follower {
     }
 
     fn handle_pre_vote_response(&mut self, response: PreVoteResponse, ctx: &PaxosSharedContext) {
-        let Some(leader_id) = response.try_get_leader(|received_term| received_term >= ctx.get_current_term()) else {
+        let Some(leader_id) =
+            response.try_get_leader(|received_term| received_term >= ctx.get_current_term())
+        else {
             return;
         };
         println!(
@@ -238,7 +243,7 @@ impl Follower {
 #[async_trait]
 impl PaxosRole for Follower {
     async fn handle_event(
-        self,
+        mut self,
         event: PaxosEvent,
         ctx: Arc<PaxosSharedContext>,
     ) -> Result<PaxosState, Box<dyn Error + Send + Sync>> {
@@ -267,6 +272,9 @@ impl PaxosRole for Follower {
                 let response = follower.handle_vote_request(request, ctx.clone()).await;
                 vote_command.send(response)?;
                 Ok(PaxosState::Follower(follower))
+            }
+            PaxosEvent::VoteResponseReceived(_) => {
+                todo!()
             }
         }
     }
