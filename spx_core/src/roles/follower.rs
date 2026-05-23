@@ -131,7 +131,7 @@ impl Follower {
 
         // Reject if this follower has already granted a vote in a term >= the requested term
         if let Some((voted_term, voted_id)) = self.voted_for_id {
-            if voted_term >= request.next_term {
+            if voted_term >= request.term {
                 return VoteResponse {
                     member_id: current_member_id,
                     term: current_term,
@@ -160,7 +160,7 @@ impl Follower {
         }
 
         // Reject if the proposed term number is less than or equal to the current term number
-        if request.next_term <= current_term {
+        if request.term <= current_term {
             return VoteResponse {
                 member_id: current_member_id,
                 term: current_term,
@@ -204,7 +204,7 @@ impl Follower {
         }
 
         // Record the vote for this candidate in the current term
-        self.voted_for_id = Some((request.next_term, request.member_id));
+        self.voted_for_id = Some((request.term, request.member_id));
 
         // Reset the countdown so a spurious ElectionCountdownExpired doesn't fire while a
         // candidate is actively running an election
@@ -238,8 +238,11 @@ impl Follower {
             return;
         };
         println!(
-            "[Follower {}] Info: Member {} reported active leader {} at term {} in pre-vote response, updating known leader",
-            ctx.get_current_member_id(), response.member_id, leader_id, response.term
+            "{} Info: Member {} reported active leader {} at term {} in pre-vote response, updating known leader",
+            ctx.log_prefix("Follower"),
+            response.member_id,
+            leader_id,
+            response.term
         );
         self.update_current_leader_id(leader_id);
     }
@@ -255,8 +258,11 @@ impl Follower {
             return;
         };
         println!(
-            "[Follower {}] Info: Member {} reported active leader {} at term {} in vote response, updating known leader",
-            ctx.get_current_member_id(), response.member_id, leader_id, response.term
+            "{} Info: Member {} reported active leader {} at term {} in vote response, updating known leader",
+            ctx.log_prefix("Follower"),
+            response.member_id,
+            leader_id,
+            response.term
         );
         self.update_current_leader_id(leader_id);
     }
@@ -272,16 +278,16 @@ impl PaxosRole for Follower {
         match event {
             PaxosEvent::LeaderLeaseExpired => {
                 println!(
-                    "[Follower {}] Info: leader lease expired, starting election countdown",
-                    ctx.get_current_member_id()
+                    "{} Info: leader lease expired, starting election countdown",
+                    ctx.log_prefix("Follower")
                 );
                 self.cd_runner.start(self.cd_token.clone()).await?;
                 Ok(PaxosState::Follower(self))
             }
             PaxosEvent::ElectionCountdownExpired => {
                 println!(
-                    "[Follower {}] Info: election countdown expired, transitioning to pre-candidate",
-                    ctx.get_current_member_id()
+                    "{} Info: election countdown expired, transitioning to pre-candidate",
+                    ctx.log_prefix("Follower")
                 );
                 let mut pre_candidate = PreCandidate::new(ctx.get_peer_ids());
                 pre_candidate.dispatch_pre_vote(ctx).await?;
@@ -299,10 +305,9 @@ impl PaxosRole for Follower {
             }
             PaxosEvent::VoteRequestReceived(vote_command) => {
                 let request = vote_command.get_request();
-                let mut follower = self;
-                let response = follower.handle_vote_request(request, ctx.clone()).await;
+                let response = self.handle_vote_request(request, ctx.clone()).await;
                 vote_command.send(response)?;
-                Ok(PaxosState::Follower(follower))
+                Ok(PaxosState::Follower(self))
             }
             PaxosEvent::VoteResponseReceived(response) => {
                 self.handle_vote_response(response, &ctx).await;

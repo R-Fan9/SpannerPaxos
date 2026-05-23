@@ -20,7 +20,7 @@ fn log_entry_from_proto(e: spx_protocol::LogEntry) -> LogEntry {
 pub fn vote_request_to_proto(r: VoteRequest) -> spx_protocol::RequestVoteRequest {
     spx_protocol::RequestVoteRequest {
         member_id: r.member_id.to_string(),
-        next_term: r.next_term,
+        term: r.term,
         last_log_term: r.last_log_term,
         last_log_slot: r.last_log_slot,
     }
@@ -29,7 +29,7 @@ pub fn vote_request_to_proto(r: VoteRequest) -> spx_protocol::RequestVoteRequest
 pub fn vote_request_from_proto(r: spx_protocol::RequestVoteRequest) -> VoteRequest {
     VoteRequest {
         member_id: Uuid::parse_str(&r.member_id).unwrap(),
-        next_term: r.next_term,
+        term: r.term,
         last_log_term: r.last_log_term,
         last_log_slot: r.last_log_slot,
     }

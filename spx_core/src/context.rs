@@ -100,6 +100,15 @@ impl PaxosSharedContext {
         self.member_id
     }
 
+    pub fn log_prefix(&self, role: &str) -> String {
+        format!(
+            "[{} {}, term {}]",
+            role,
+            self.member_id,
+            self.get_current_term()
+        )
+    }
+
     pub fn get_peer_ids(&self) -> &DashSet<Uuid> {
         &self.peer_ids
     }
@@ -157,7 +166,7 @@ impl PaxosSharedContext {
     pub fn create_vote(&self) -> VoteRequest {
         VoteRequest {
             member_id: self.get_current_member_id(),
-            next_term: self.get_next_term(),
+            term: self.get_current_term(),
             last_log_term: self.get_last_log_term(),
             last_log_slot: self.get_last_log_slot(),
         }

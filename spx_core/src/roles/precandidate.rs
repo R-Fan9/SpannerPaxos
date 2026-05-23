@@ -1,6 +1,6 @@
 use crate::roles::{Candidate, Follower, PaxosRole, util};
 use crate::state_machine::PaxosState;
-use crate::{PaxosEvent, PaxosSharedContext, PreVoteResponse};
+use crate::{PaxosEvent, PaxosSharedContext, PreVoteResponse, VoteOutcome, VotePromise, VoteRejection, VoteRequest, VoteResponse};
 use dashmap::{DashMap, DashSet};
 use std::error::Error;
 use std::sync::Arc;
@@ -53,8 +53,8 @@ impl PreCandidate {
         // Record the response in the board
         if !response.vote_granted {
             println!(
-                "[PreCandidate {}] Info: Member {} rejected pre-vote: {}",
-                ctx.get_current_member_id(),
+                "{} Info: Member {} rejected pre-vote: {}",
+                ctx.log_prefix("PreCandidate"),
                 response.member_id,
                 response.rejection_reason()
             );
@@ -66,8 +66,8 @@ impl PreCandidate {
         // Check if a quorum of members has granted the pre-vote
         if self.has_pre_vote_quorum() {
             println!(
-                "[PreCandidate {}] Info: A quorum of pre-votes has been granted, transitioning to leader candidate",
-                ctx.get_current_member_id()
+                "{} Info: A quorum of pre-votes has been granted, transitioning to leader candidate",
+                ctx.log_prefix("PreCandidate")
             );
 
             // Transition to a leader candidate
@@ -83,16 +83,100 @@ impl PreCandidate {
 
         // Check if all responses have been received and quorum is not reached
         if self.has_all_pre_vote_responses() {
-            println!("[PreCandidate {}] Warning: All members responded but quorum not reached, stepping down as a follower", ctx.get_current_member_id());
+            println!("{} Warning: All members responded but quorum not reached, stepping down as a follower", ctx.log_prefix("PreCandidate"));
             return Ok(Some(Err(Follower::new(None, ctx.get_event_sender()))));
         }
 
         // Check if the pre-vote campaign has timed out
         if self.has_pre_vote_campaign_timeout() {
-            println!("[PreCandidate {}] Warning: Pre-vote campaign timeout occurred, stepping down as a follower", ctx.get_current_member_id());
+            println!("{} Warning: Pre-vote campaign timeout occurred, stepping down as a follower", ctx.log_prefix("PreCandidate"));
             return Ok(Some(Err(Follower::new(None, ctx.get_event_sender()))));
         }
         Ok(None)
+    }
+
+    async fn handle_vote_request(
+        &self,
+        request: VoteRequest,
+        ctx: Arc<PaxosSharedContext>,
+    ) -> VoteResponse {
+        let current_term = ctx.get_current_term();
+        let current_member_id = ctx.get_current_member_id();
+
+        // Reject if the proposed term number is less than or equal to the current term number
+        if request.term <= current_term {
+            return VoteResponse {
+                member_id: current_member_id,
+                term: current_term,
+                outcome: VoteOutcome::Rejection(VoteRejection {
+                    current_leader_id: None,
+                    member_last_log_term: None,
+                    member_last_log_slot: None,
+                    voted_for_id: None,
+                }),
+            };
+        }
+
+        // Reject if the term number of the last log entry persisted by the candidate is lower than the term number of the last log persisted by the current member
+        let current_last_log_term = ctx.get_last_log_term();
+        if request.last_log_term < current_last_log_term {
+            return VoteResponse {
+                member_id: current_member_id,
+                term: current_term,
+                outcome: VoteOutcome::Rejection(VoteRejection {
+                    current_leader_id: None,
+                    member_last_log_term: Some(current_last_log_term),
+                    member_last_log_slot: None,
+                    voted_for_id: None,
+                }),
+            };
+        }
+
+        // Reject if the slot number of the last log entry persisted by the candidate is lower than the slot number of the last log persisted by the current member
+        let current_last_log_slot = ctx.get_last_log_slot();
+        if request.last_log_slot < current_last_log_slot {
+            return VoteResponse {
+                member_id: current_member_id,
+                term: current_term,
+                outcome: VoteOutcome::Rejection(VoteRejection {
+                    current_leader_id: None,
+                    member_last_log_term: Some(current_last_log_term),
+                    member_last_log_slot: Some(current_last_log_slot),
+                    voted_for_id: None,
+                }),
+            };
+        }
+
+        VoteResponse {
+            member_id: current_member_id,
+            term: current_term,
+            outcome: VoteOutcome::Promise(VotePromise {
+                last_log_term: current_last_log_term,
+                last_log_slot: current_last_log_slot,
+                uncommitted_entries: ctx.get_uncommitted_entries().await,
+            }),
+        }
+    }
+
+    fn handle_vote_response(&self, response: VoteResponse, ctx: &PaxosSharedContext) {
+        match &response.outcome {
+            VoteOutcome::Promise(_) => {
+                println!(
+                    "{} Info: Member {} granted vote at term {}",
+                    ctx.log_prefix("PreCandidate"),
+                    response.member_id,
+                    response.term
+                );
+            }
+            VoteOutcome::Rejection(rejection) => {
+                println!(
+                    "{} Info: Member {} rejected vote: {}",
+                    ctx.log_prefix("PreCandidate"),
+                    response.member_id,
+                    rejection.rejection_reason(response.term)
+                );
+            }
+        }
     }
 
     fn update_pre_vote_board(&self, response: PreVoteResponse) {
@@ -150,11 +234,15 @@ impl PaxosRole for PreCandidate {
                 }
                 Ok(PaxosState::PreCandidate(self))
             }
-            PaxosEvent::VoteRequestReceived(_) => {
-                todo!()
+            PaxosEvent::VoteRequestReceived(vote_command) => {
+                let request = vote_command.get_request();
+                let response = self.handle_vote_request(request, ctx.clone()).await;
+                vote_command.send(response)?;
+                Ok(PaxosState::PreCandidate(self))
             }
-            PaxosEvent::VoteResponseReceived(_) => {
-                todo!()
+            PaxosEvent::VoteResponseReceived(response) => {
+                self.handle_vote_response(response, &ctx);
+                Ok(PaxosState::PreCandidate(self))
             }
         }
     }

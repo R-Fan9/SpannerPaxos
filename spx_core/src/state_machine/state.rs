@@ -22,13 +22,14 @@ impl PaxosState {
         let mut current_state = self;
 
         // Check if the event term is greater than the current term
-        let event_term = event.get_term();
-        if event_term > ctx.get_current_term() {
-            // Update the current term on this member (node) to the highest term received
-            ctx.set_current_term(event_term);
+        if let Some(event_term) = event.get_term() {
+            if event_term > ctx.get_current_term() {
+                // Update the current term on this member (node) to the highest term received
+                ctx.set_current_term(event_term);
 
-            // Force this member (node) to step down as a follower, preserving the known leader if any
-            current_state = PaxosState::Follower(Follower::new(current_state.get_leader_id(), ctx.get_event_sender()));
+                // Force this member (node) to step down as a follower, preserving the known leader if any
+                current_state = PaxosState::Follower(Follower::new(current_state.get_leader_id(), ctx.get_event_sender()));
+            }
         }
 
         let next_state = match current_state {

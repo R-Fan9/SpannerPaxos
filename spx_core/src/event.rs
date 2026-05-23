@@ -21,8 +21,19 @@ pub enum PaxosEvent {
 }
 
 impl PaxosEvent {
-    pub fn get_term(&self) -> u32 {
-        todo!()
+    pub fn get_term(&self) -> Option<u32> {
+        match self {
+            // Internal events carry no term
+            PaxosEvent::LeaderLeaseExpired | PaxosEvent::ElectionCountdownExpired => None,
+
+            // Pre-vote uses a proposed next_term, not the sender's actual term — skip to avoid
+            // spurious step-downs during the dry-run phase
+            PaxosEvent::PreVoteRequestReceived(_) => None,
+
+            PaxosEvent::PreVoteResponseReceived(r) => Some(r.term),
+            PaxosEvent::VoteRequestReceived(cmd) => Some(cmd.get_request().term),
+            PaxosEvent::VoteResponseReceived(r) => Some(r.term),
+        }
     }
 }
 

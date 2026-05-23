@@ -68,13 +68,13 @@ impl Candidate {
     fn handle_pre_vote_response(&self, response: PreVoteResponse, ctx: &PaxosSharedContext) {
         if response.vote_granted {
             println!(
-                "[Candidate {}] Info: Member {} granted pre-vote at term {}",
-                ctx.get_current_member_id(), response.member_id, response.term
+                "{} Info: Member {} granted pre-vote at term {}",
+                ctx.log_prefix("Candidate"), response.member_id, response.term
             );
         } else {
             println!(
-                "[Candidate {}] Info: Member {} rejected pre-vote: {}",
-                ctx.get_current_member_id(),
+                "{} Info: Member {} rejected pre-vote: {}",
+                ctx.log_prefix("Candidate"),
                 response.member_id,
                 response.rejection_reason()
             );
@@ -91,8 +91,8 @@ impl Candidate {
         // Log the rejection reason before recording the response
         if let VoteOutcome::Rejection(rejection) = &response.outcome {
             println!(
-                "[Candidate {}] Info: Member {} rejected vote: {}",
-                ctx.get_current_member_id(),
+                "{} Info: Member {} rejected vote: {}",
+                ctx.log_prefix("Candidate"),
                 member_id,
                 rejection.rejection_reason(response.term)
             );
@@ -118,20 +118,20 @@ impl Candidate {
 
         // Check if a quorum of members has granted votes
         if self.has_vote_quorum() {
-            println!("[Candidate {}] Info: A quorum of votes has been granted, transitioning to leader", ctx.get_current_member_id());
+            println!("{} Info: A quorum of votes has been granted, transitioning to leader", ctx.log_prefix("Candidate"));
             let score_board = std::mem::take(&mut self.score_board);
             return Ok(Some(Ok(Leader::from_candidate(score_board))));
         }
 
         // Check if all responses have been received and quorum is not reached
         if self.has_all_vote_responses() {
-            println!("[Candidate {}] Warning: All members responded but quorum not reached, stepping down as a follower", ctx.get_current_member_id());
+            println!("{} Warning: All members responded but quorum not reached, stepping down as a follower", ctx.log_prefix("Candidate"));
             return Ok(Some(Err(Follower::new(None, ctx.get_event_sender()))));
         }
 
         // Check if the vote campaign has timed out
         if self.has_vote_campaign_timeout() {
-            println!("[Candidate {}] Warning: Vote campaign timeout occurred, stepping down as a follower", ctx.get_current_member_id());
+            println!("{} Warning: Vote campaign timeout occurred, stepping down as a follower", ctx.log_prefix("Candidate"));
             return Ok(Some(Err(Follower::new(None, ctx.get_event_sender()))));
         }
         Ok(None)

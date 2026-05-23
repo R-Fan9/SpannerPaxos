@@ -7,7 +7,7 @@ message RequestVoteRequest {
     string member_id = 1;
 
     // The next term (ballot) number the pre-candidate proposing to start
-    uint32 next_term = 2;
+    uint32 term = 2;
 
     // The term number of the last log entry persisted by the candidate
     uint32 last_log_term = 4;
