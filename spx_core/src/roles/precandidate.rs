@@ -1,6 +1,9 @@
 use crate::roles::{Candidate, Follower, PaxosRole, util};
 use crate::state_machine::PaxosState;
-use crate::{PaxosEvent, PaxosSharedContext, PreVoteResponse, VoteOutcome, VotePromise, VoteRejection, VoteRequest, VoteResponse};
+use crate::{
+    PaxosEvent, PaxosSharedContext, PreVoteResponse, VoteOutcome, VotePromise, VoteRejection,
+    VoteRequest, VoteResponse,
+};
 use dashmap::{DashMap, DashSet};
 use std::error::Error;
 use std::sync::Arc;
@@ -15,6 +18,9 @@ pub struct PreCandidate {
 
     // The deadline for the pre-vote campaign
     pre_vote_campaign_deadline: Option<time::Instant>,
+
+    // The candidate this pre-candidate has voted for in the current term, keyed by (term, candidate_id)
+    voted_for_id: Option<(u32, Uuid)>,
 }
 
 impl PreCandidate {
@@ -26,6 +32,7 @@ impl PreCandidate {
         Self {
             pre_vote_board,
             pre_vote_campaign_deadline: None,
+            voted_for_id: None,
         }
     }
 
@@ -83,25 +90,47 @@ impl PreCandidate {
 
         // Check if all responses have been received and quorum is not reached
         if self.has_all_pre_vote_responses() {
-            println!("{} Warning: All members responded but quorum not reached, stepping down as a follower", ctx.log_prefix("PreCandidate"));
+            println!(
+                "{} Warning: All members responded but quorum not reached, stepping down as a follower",
+                ctx.log_prefix("PreCandidate")
+            );
             return Ok(Some(Err(Follower::new(None, ctx.get_event_sender()))));
         }
 
         // Check if the pre-vote campaign has timed out
         if self.has_pre_vote_campaign_timeout() {
-            println!("{} Warning: Pre-vote campaign timeout occurred, stepping down as a follower", ctx.log_prefix("PreCandidate"));
+            println!(
+                "{} Warning: Pre-vote campaign timeout occurred, stepping down as a follower",
+                ctx.log_prefix("PreCandidate")
+            );
             return Ok(Some(Err(Follower::new(None, ctx.get_event_sender()))));
         }
         Ok(None)
     }
 
     async fn handle_vote_request(
-        &self,
+        &mut self,
         request: VoteRequest,
         ctx: Arc<PaxosSharedContext>,
     ) -> VoteResponse {
         let current_term = ctx.get_current_term();
         let current_member_id = ctx.get_current_member_id();
+
+        // Reject if already granted a vote in a term >= the requested term
+        if let Some((voted_term, voted_id)) = self.voted_for_id {
+            if voted_term >= request.term {
+                return VoteResponse {
+                    member_id: current_member_id,
+                    term: current_term,
+                    outcome: VoteOutcome::Rejection(VoteRejection {
+                        current_leader_id: None,
+                        member_last_log_term: None,
+                        member_last_log_slot: None,
+                        voted_for_id: Some(voted_id),
+                    }),
+                };
+            }
+        }
 
         // Reject if the proposed term number is less than or equal to the current term number
         if request.term <= current_term {
@@ -147,6 +176,9 @@ impl PreCandidate {
             };
         }
 
+        // Record the vote for this candidate in the current term
+        self.voted_for_id = Some((request.term, request.member_id));
+
         VoteResponse {
             member_id: current_member_id,
             term: current_term,
@@ -185,7 +217,9 @@ impl PreCandidate {
     }
 
     fn has_all_pre_vote_responses(&self) -> bool {
-        self.pre_vote_board.iter().all(|entry| entry.value().is_some())
+        self.pre_vote_board
+            .iter()
+            .all(|entry| entry.value().is_some())
     }
 
     // Checks if the pre-candidate has granted a quorum of pre-votes from other members
@@ -210,7 +244,7 @@ impl PreCandidate {
 #[async_trait]
 impl PaxosRole for PreCandidate {
     async fn handle_event(
-        self,
+        mut self,
         event: PaxosEvent,
         ctx: Arc<PaxosSharedContext>,
     ) -> Result<PaxosState, Box<dyn Error + Send + Sync>> {
