@@ -1,3 +1,4 @@
+use crate::models::LogEntry;
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -76,8 +77,12 @@ impl VoteRejection {
             reasons.push(format!("active leader {}", leader_id));
         }
         if self.member_last_log_term.is_some() || self.member_last_log_slot.is_some() {
-            let log_term = self.member_last_log_term.map_or("?".to_string(), |t| t.to_string());
-            let log_slot = self.member_last_log_slot.map_or("?".to_string(), |s| s.to_string());
+            let log_term = self
+                .member_last_log_term
+                .map_or("?".to_string(), |t| t.to_string());
+            let log_slot = self
+                .member_last_log_slot
+                .map_or("?".to_string(), |s| s.to_string());
             reasons.push(format!("log ahead (term={}, slot={})", log_term, log_slot));
         }
         if let Some(voted_for) = self.voted_for_id {
@@ -85,16 +90,4 @@ impl VoteRejection {
         }
         reasons.join(", ")
     }
-}
-
-#[derive(Clone)]
-pub struct LogEntry {
-    // The term number when the leader originally proposed this write
-    pub term: u32,
-
-    // The slot number of this entry in the append-only log
-    pub slot: u32,
-
-    // The actual database command/mutation
-    pub entry: String,
 }

@@ -4,6 +4,9 @@ use std::fmt;
 pub enum PaxosEvent {
     LeaderLeaseExpired,
 
+    // The election countdown has expired; if still a follower, transition to pre-candidate
+    ElectionCountdownExpired,
+
     // This member has received a pre-vote message from a leader pre-candidate
     PreVoteRequestReceived(PaxosCommand<PreVoteRequest, PreVoteResponse>),
 

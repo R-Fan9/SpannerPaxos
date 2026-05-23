@@ -1,9 +1,11 @@
-use crate::{LogEntry, PaxosDispatcher, PreVoteRequest, VoteRequest};
+use crate::models::LogEntry;
+use crate::{PaxosDispatcher, PaxosEvent, PreVoteRequest, VoteRequest};
 use chrono::{DateTime, Utc};
-use spx_lib::true_time::TrueTime;
 use dashmap::DashSet;
+use spx_lib::true_time::TrueTime;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use tokio::sync::mpsc::Sender;
 use tokio::sync::{Notify, RwLock};
 use uuid::Uuid;
 
@@ -38,10 +40,18 @@ pub struct PaxosSharedContext {
 
     // The dispatcher for dispatching Paxos requests to other Paxos members
     dispatcher: Arc<dyn PaxosDispatcher>,
+
+    // The sender for posting Paxos events back into the event loop internally
+    event_tx: Sender<PaxosEvent>,
 }
 
 impl PaxosSharedContext {
-    pub fn new(member_id: Uuid, peer_ids: DashSet<Uuid>, dispatcher: Arc<dyn PaxosDispatcher>) -> Self {
+    pub fn new(
+        member_id: Uuid,
+        peer_ids: DashSet<Uuid>,
+        dispatcher: Arc<dyn PaxosDispatcher>,
+        event_tx: Sender<PaxosEvent>,
+    ) -> Self {
         Self {
             member_id,
             peer_ids,
@@ -53,7 +63,12 @@ impl PaxosSharedContext {
             leader_lease_update_notify: Notify::new(),
             uncommitted_entries: RwLock::new(Vec::new()),
             dispatcher,
+            event_tx,
         }
+    }
+
+    pub fn get_event_sender(&self) -> Sender<PaxosEvent> {
+        self.event_tx.clone()
     }
 
     pub fn get_dispatcher(&self) -> Arc<dyn PaxosDispatcher> {

@@ -113,6 +113,20 @@ impl PaxosDispatcher for GrpcPaxosDispatcher {
         &self,
         request: VoteRequest,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        todo!()
+        self.dispatch_request(move |mut client| {
+            let request = request.clone();
+            Box::pin(async move {
+                let request = util::vote_request_to_proto(request);
+                let response = match client.request_vote(request).await {
+                    Ok(response) => response,
+                    Err(e) => return Err(format!("Vote request failed {:?}", e).into()),
+                };
+                Ok(PaxosEvent::VoteResponseReceived(
+                    util::vote_response_from_proto(response.into_inner()),
+                ))
+            })
+        })
+        .await?;
+        Ok(())
     }
 }

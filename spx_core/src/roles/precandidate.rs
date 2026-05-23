@@ -50,27 +50,28 @@ impl PreCandidate {
         response: PreVoteResponse,
         ctx: Arc<PaxosSharedContext>,
     ) -> Result<Option<Result<Candidate, Follower>>, Box<dyn Error + Send + Sync>> {
-        // Log the rejection reason and continue waiting for other responses
+        // Record the response in the board
         if !response.vote_granted {
             println!(
-                "Info: Member {} rejected pre-vote: {}",
+                "[PreCandidate {}] Info: Member {} rejected pre-vote: {}",
+                ctx.get_current_member_id(),
                 response.member_id,
                 response.rejection_reason()
             );
-            return Ok(None);
         }
 
-        // Keep track of the granted pre-vote
+        // Keep track of the response
         self.update_pre_vote_board(response);
 
         // Check if a quorum of members has granted the pre-vote
         if self.has_pre_vote_quorum() {
             println!(
-                "Info: A quorum of pre-votes has been granted, transitioning to leader candidate"
+                "[PreCandidate {}] Info: A quorum of pre-votes has been granted, transitioning to leader candidate",
+                ctx.get_current_member_id()
             );
 
             // Transition to a leader candidate
-            let candidate = Candidate::new(ctx.get_peer_ids());
+            let mut candidate = Candidate::new(ctx.get_peer_ids());
 
             // Increment the current term number
             ctx.increment_current_term();
@@ -80,10 +81,16 @@ impl PreCandidate {
             return Ok(Some(Ok(candidate)));
         }
 
+        // Check if all responses have been received and quorum is not reached
+        if self.has_all_pre_vote_responses() {
+            println!("[PreCandidate {}] Warning: All members responded but quorum not reached, stepping down as a follower", ctx.get_current_member_id());
+            return Ok(Some(Err(Follower::new(None, ctx.get_event_sender()))));
+        }
+
         // Check if the pre-vote campaign has timed out
         if self.has_pre_vote_campaign_timeout() {
-            println!("Warning: Pre-vote campaign timeout occurred, stepping down as a follower");
-            return Ok(Some(Err(Follower::new(None))));
+            println!("[PreCandidate {}] Warning: Pre-vote campaign timeout occurred, stepping down as a follower", ctx.get_current_member_id());
+            return Ok(Some(Err(Follower::new(None, ctx.get_event_sender()))));
         }
         Ok(None)
     }
@@ -91,6 +98,10 @@ impl PreCandidate {
     fn update_pre_vote_board(&self, response: PreVoteResponse) {
         self.pre_vote_board
             .insert(response.member_id, Some(response));
+    }
+
+    fn has_all_pre_vote_responses(&self) -> bool {
+        self.pre_vote_board.iter().all(|entry| entry.value().is_some())
     }
 
     // Checks if the pre-candidate has granted a quorum of pre-votes from other members
@@ -120,8 +131,8 @@ impl PaxosRole for PreCandidate {
         ctx: Arc<PaxosSharedContext>,
     ) -> Result<PaxosState, Box<dyn Error + Send + Sync>> {
         match event {
-            PaxosEvent::LeaderLeaseExpired => {
-                // The pre-candidate is already in a leader election process, ignore leader lease expiration event
+            PaxosEvent::LeaderLeaseExpired | PaxosEvent::ElectionCountdownExpired => {
+                // Already in a leader election process, ignore these events
                 Ok(PaxosState::PreCandidate(self))
             }
             PaxosEvent::PreVoteRequestReceived(pre_vote_command) => {

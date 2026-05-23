@@ -3,10 +3,10 @@ use std::sync::atomic::{AtomicU32, Ordering};
 // Tracks a Paxos group member's local WAL log positions
 pub struct LogPosition {
     // The index of the last log entry that has been persisted to the member's local WAL
-    pub(super) match_index: AtomicU32,
+    pub match_index: AtomicU32,
 
     // The index of the next log entry to be persisted to the member's local WAL
-    pub(super) next_index: AtomicU32,
+    pub next_index: AtomicU32,
 }
 
 impl LogPosition {

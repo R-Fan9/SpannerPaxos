@@ -1,7 +1,7 @@
-use crate::{PaxosEvent, PaxosSharedContext};
+use crate::models::LogPosition;
 use crate::roles::PaxosRole;
-use crate::roles::log_position::LogPosition;
 use crate::state_machine::PaxosState;
+use crate::{PaxosEvent, PaxosSharedContext};
 use dashmap::DashMap;
 use std::error::Error;
 use std::sync::Arc;

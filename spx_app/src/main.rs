@@ -1,6 +1,5 @@
 use crate::configs::ServerConfig;
 use crate::grpc::GrpcPaxosDispatcher;
-use dashmap::DashSet;
 use spx_core::{PaxosEvent, PaxosStateMachine};
 use spx_lib::worker_runner::{Worker, WorkerRunnerManager};
 use std::collections::HashSet;
@@ -19,7 +18,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     // Load configurations into memory
     let member_id = uuid::Uuid::new_v4();
-    let peer_ids: DashSet<uuid::Uuid> = DashSet::new();
+    let peer_ids = std::collections::HashSet::<uuid::Uuid>::new();
     let member_configs = HashSet::new();
     let server_config = ServerConfig {
         host_address: "".to_string(),
@@ -38,7 +37,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let dispatcher = GrpcPaxosDispatcher::new(event_tx.clone(), member_configs);
 
     // Create the Paxos state machine
-    let machine = PaxosStateMachine::new(member_id, peer_ids, Arc::new(dispatcher), event_rx)
+    let machine = PaxosStateMachine::new(member_id, peer_ids, Arc::new(dispatcher), event_tx.clone(), event_rx)
         .run(shutdown_token.child_token())
         .await
         .expect("Failed to start Paxos state machine");

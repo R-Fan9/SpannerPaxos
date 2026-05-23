@@ -1,53 +1,82 @@
+use crate::worker_runner::Worker;
+use async_trait::async_trait;
 use rand::Rng;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::error::Error;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Notify;
+use tokio::task::JoinHandle;
 use tokio::time;
+use tokio_util::sync::CancellationToken;
 
-const MIN_WAIT_TIME_MS: u64 = 15;
+const MIN_WAIT_TIME_MS: u64 = 30;
 
-// A count-down clock that can be reset to generate a new random wait time within a set upper bound
+/// A count-down clock that runs a background loop, invoking a callback when the countdown expires.
+/// Supports reset (restart with a new random duration) via `reset()`.
+/// Cancellation is handled by the `CancellationToken` passed to `on_start`.
 pub struct CountDownClock {
     max_wait_time_ms: u64,
-    started: AtomicBool,
+    reset_notify: Notify,
+    on_expire: Arc<dyn Fn() + Send + Sync + 'static>,
 }
 
 impl CountDownClock {
-    pub fn new(max_wait_time_ms: u64) -> Self {
+    pub fn new(max_wait_time_ms: u64, on_expire: impl Fn() + Send + Sync + 'static) -> Self {
         assert!(
-            max_wait_time_ms >= MIN_WAIT_TIME_MS,
-            "max_wait_time must be at least {MIN_WAIT_TIME_MS}ms, got {max_wait_time_ms}"
+            max_wait_time_ms > MIN_WAIT_TIME_MS,
+            "max_wait_time must be greater than {MIN_WAIT_TIME_MS}ms, got {max_wait_time_ms}"
         );
         Self {
             max_wait_time_ms,
-            started: AtomicBool::new(false),
+            reset_notify: Notify::new(),
+            on_expire: Arc::new(on_expire),
         }
     }
 
-    pub fn has_started(&self) -> bool {
-        self.started.load(Ordering::Acquire)
-    }
-
+    /// Signals the background loop to discard the current wait and restart with a new random duration.
     pub fn reset(&self) {
-        self.started.store(false, Ordering::Release);
+        self.reset_notify.notify_one();
     }
 
-    pub async fn start(&self) {
-        // Atomically claim the started slot, only the first caller proceeds, all others skip
-        // Note: AcqRel ensures this thread sees the freshest 'started' value (Acquire) and,
-        // if it wins, immediately publishes the updated `started` value (true) to all other threads (Release)
-        if self
-            .started
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
-            // The count-down clock has already started, skip
-            return;
+    async fn start(
+        &self,
+        cancellation_token: CancellationToken,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        loop {
+            let wait_ms = rand::thread_rng().gen_range(MIN_WAIT_TIME_MS..=self.max_wait_time_ms);
+
+            tokio::select! {
+                biased;
+
+                _ = cancellation_token.cancelled() => break,
+
+                _ = self.reset_notify.notified() => continue,
+
+                _ = time::sleep(Duration::from_millis(wait_ms)) => {
+                    (self.on_expire)();
+                    break;
+                }
+            }
         }
+        Ok(())
+    }
+}
 
-        // Generate a random wait time within the set upper bound
-        let wait_ms = rand::thread_rng().gen_range(MIN_WAIT_TIME_MS..=self.max_wait_time_ms);
+#[async_trait]
+impl Worker for CountDownClock {
+    async fn on_start(
+        self: Arc<Self>,
+        cancellation_token: CancellationToken,
+    ) -> Result<JoinHandle<Result<(), Box<dyn Error + Send + Sync>>>, Box<dyn Error + Send + Sync>>
+    {
+        let task = tokio::spawn(async move { self.start(cancellation_token).await });
+        Ok(task)
+    }
 
-        // Sleep for the specified wait time
-        time::sleep(Duration::from_millis(wait_ms)).await
+    async fn on_stop(
+        &self,
+        _cancellation_token: CancellationToken,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        Ok(())
     }
 }

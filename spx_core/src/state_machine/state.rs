@@ -28,7 +28,7 @@ impl PaxosState {
             ctx.set_current_term(event_term);
 
             // Force this member (node) to step down as a follower, preserving the known leader if any
-            current_state = PaxosState::Follower(Follower::new(current_state.get_leader_id()));
+            current_state = PaxosState::Follower(Follower::new(current_state.get_leader_id(), ctx.get_event_sender()));
         }
 
         let next_state = match current_state {

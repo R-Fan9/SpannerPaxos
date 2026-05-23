@@ -52,7 +52,7 @@ message Rejection {
     optional uint32 member_last_log_slot = 3;
 
     // Informs the Candidate that it lost the race because this Follower already voted for someone else this term.
-    optional uint32 voted_for_id = 4;
+    optional string voted_for_id = 4;
 }
 
 message LogEntry {
