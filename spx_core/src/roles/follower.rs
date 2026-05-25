@@ -5,41 +5,41 @@ use crate::{
     VoteRejection, VoteRequest, VoteResponse,
 };
 use spx_lib::count_down_clock::CountDownClock;
-use spx_lib::worker_runner::WorkerRunner;
+use spx_lib::true_time::TrueTime;
 use std::error::Error;
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
-use tokio_util::sync::CancellationToken;
 use tonic::async_trait;
 use uuid::Uuid;
+
+struct VoteRecord {
+    term: u32,
+    candidate_id: Uuid,
+}
 
 // The state of Paxos group follower
 pub struct Follower {
     // The unique identifier of the leader that the follower is currently following
     current_leader_id: Option<Uuid>,
 
-    // The candidate this follower has voted for in the current term, keyed by (term, candidate_id)
-    voted_for_id: Option<(u32, Uuid)>,
+    // The most recent vote granted by this follower, including when the vote lease expires
+    vote_record: Option<VoteRecord>,
 
-    // A count-down clock worker that fires ElectionCountdownExpired after a random delay
-    cd_runner: WorkerRunner<CountDownClock>,
-
-    // Cancellation token scoped to this follower's countdown; canceled when the follower steps down
-    cd_token: CancellationToken,
+    // A count-down clock that fires ElectionCountdownExpired after a random delay
+    election_cd_clock: CountDownClock,
 }
 
 impl Follower {
     pub fn new(current_leader_id: Option<Uuid>, event_tx: Sender<PaxosEvent>) -> Self {
-        let cd_clock = CountDownClock::new(1000, move || {
+        let cd_clock = CountDownClock::new(move || {
             if let Err(e) = event_tx.try_send(PaxosEvent::ElectionCountdownExpired) {
                 eprintln!("Error: Failed to send ElectionCountdownExpired event: {e}");
             }
         });
         Self {
             current_leader_id,
-            voted_for_id: None,
-            cd_runner: WorkerRunner::new(cd_clock),
-            cd_token: CancellationToken::new(),
+            vote_record: None,
+            election_cd_clock: cd_clock,
         }
     }
 
@@ -130,8 +130,8 @@ impl Follower {
         let current_leader_id = self.current_leader_id;
 
         // Reject if this follower has already granted a vote in a term >= the requested term
-        if let Some((voted_term, voted_id)) = self.voted_for_id {
-            if voted_term >= request.term {
+        if let Some(ref record) = self.vote_record {
+            if record.term >= request.term {
                 return VoteResponse {
                     member_id: current_member_id,
                     term: current_term,
@@ -139,7 +139,7 @@ impl Follower {
                         current_leader_id,
                         member_last_log_term: None,
                         member_last_log_slot: None,
-                        voted_for_id: Some(voted_id),
+                        voted_for_id: Some(record.candidate_id),
                     }),
                 };
             }
@@ -203,14 +203,15 @@ impl Follower {
             };
         }
 
-        // Record the vote for this candidate in the current term
-        self.voted_for_id = Some((request.term, request.member_id));
+        // Record the vote to prevent double-voting within the same term
+        self.vote_record = Some(VoteRecord {
+            term: request.term,
+            candidate_id: request.member_id,
+        });
 
-        // Reset the countdown so a spurious ElectionCountdownExpired doesn't fire while a
-        // candidate is actively running an election
-        if let Ok(clock) = self.cd_runner.get_worker() {
-            clock.reset();
-        }
+        // Treat the vote as a leader lease: block new elections and votes until the lease expires
+        ctx.update_leader_lease_expiry_time(TrueTime::now().latest + ctx.get_lease_length())
+            .await;
 
         VoteResponse {
             member_id: current_member_id,
@@ -247,6 +248,24 @@ impl Follower {
         self.update_current_leader_id(leader_id);
     }
 
+    async fn handle_election_countdown_expired(
+        &self,
+        ctx: Arc<PaxosSharedContext>,
+    ) -> Result<Option<PreCandidate>, Box<dyn Error + Send + Sync>> {
+        // Don't promote while the leader lease is still active; the countdown task has already
+        // finished so no new task is spawned here — LeaderLeaseExpired will restart the clock
+        if !ctx.is_leader_lease_expired().await {
+            return Ok(None);
+        }
+        println!(
+            "{} Info: election countdown expired, transitioning to pre-candidate",
+            ctx.log_prefix("Follower")
+        );
+        let mut pre_candidate = PreCandidate::new(ctx.get_peer_ids(), ctx.get_event_sender());
+        pre_candidate.dispatch_pre_vote(ctx).await?;
+        Ok(Some(pre_candidate))
+    }
+
     async fn handle_vote_response(&mut self, response: VoteResponse, ctx: &PaxosSharedContext) {
         if !ctx.is_leader_lease_expired().await {
             return;
@@ -276,22 +295,23 @@ impl PaxosRole for Follower {
         ctx: Arc<PaxosSharedContext>,
     ) -> Result<PaxosState, Box<dyn Error + Send + Sync>> {
         match event {
+            PaxosEvent::PreVoteCampaignExpired | PaxosEvent::VoteCampaignExpired => {
+                // Not in an election campaign, ignore these events
+                Ok(PaxosState::Follower(self))
+            }
             PaxosEvent::LeaderLeaseExpired => {
                 println!(
                     "{} Info: leader lease expired, starting election countdown",
                     ctx.log_prefix("Follower")
                 );
-                self.cd_runner.start(self.cd_token.clone()).await?;
+                self.election_cd_clock.start_random(1000);
                 Ok(PaxosState::Follower(self))
             }
             PaxosEvent::ElectionCountdownExpired => {
-                println!(
-                    "{} Info: election countdown expired, transitioning to pre-candidate",
-                    ctx.log_prefix("Follower")
-                );
-                let mut pre_candidate = PreCandidate::new(ctx.get_peer_ids());
-                pre_candidate.dispatch_pre_vote(ctx).await?;
-                Ok(PaxosState::PreCandidate(pre_candidate))
+                if let Some(pre_candidate) = self.handle_election_countdown_expired(ctx).await? {
+                    return Ok(PaxosState::PreCandidate(pre_candidate));
+                }
+                Ok(PaxosState::Follower(self))
             }
             PaxosEvent::PreVoteRequestReceived(pre_vote_command) => {
                 let request = pre_vote_command.get_request();
@@ -313,15 +333,22 @@ impl PaxosRole for Follower {
                 self.handle_vote_response(response, &ctx).await;
                 Ok(PaxosState::Follower(self))
             }
+            PaxosEvent::ReplicateWriteRequestReceived(_command) => {
+                // TODO: handle log replication from leader
+                todo!()
+            }
+            PaxosEvent::ReplicateWriteResponseReceived(_response) => {
+                // Replicate write responses are handled by the leader, not follower
+                Ok(PaxosState::Follower(self))
+            }
         }
     }
 }
 
 impl Drop for Follower {
     fn drop(&mut self) {
-        // CancellationToken is Arc-backed, so dropping it does not cancel the underlying task.
-        // Explicitly cancel here so the countdown background task is always stopped when the
+        // Explicitly cancel so the countdown background task is always stopped when the
         // follower transitions to any other state.
-        self.cd_token.cancel();
+        self.election_cd_clock.cancel();
     }
 }

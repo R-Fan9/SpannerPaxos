@@ -16,9 +16,6 @@ message ReplicateWriteRequest {
 
     // The timestamp assigned to the log entry by the leader
     google.protobuf.Timestamp write_time = 4;
-
-    // The lease expiration time of the leader
-    google.protobuf.Timestamp lease_expiry_time = 5;
 }
 
 message ReplicateWriteResponse {

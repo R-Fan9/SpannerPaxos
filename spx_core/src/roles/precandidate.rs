@@ -5,9 +5,10 @@ use crate::{
     VoteRequest, VoteResponse,
 };
 use dashmap::{DashMap, DashSet};
+use spx_lib::count_down_clock::CountDownClock;
 use std::error::Error;
 use std::sync::Arc;
-use tokio::time;
+use tokio::sync::mpsc::Sender;
 use tonic::async_trait;
 use uuid::Uuid;
 
@@ -16,23 +17,28 @@ pub struct PreCandidate {
     // A concurrent map of Paxos group member IDs to their pre-vote responses
     pre_vote_board: DashMap<Uuid, Option<PreVoteResponse>>,
 
-    // The deadline for the pre-vote campaign
-    pre_vote_campaign_deadline: Option<time::Instant>,
-
     // The candidate this pre-candidate has voted for in the current term, keyed by (term, candidate_id)
     voted_for_id: Option<(u32, Uuid)>,
+
+    // A count-down clock that fires PreVoteCampaignExpired after a fixed delay
+    prevote_cd_clock: CountDownClock,
 }
 
 impl PreCandidate {
-    pub fn new(peer_ids: &DashSet<Uuid>) -> Self {
+    pub fn new(peer_ids: &DashSet<Uuid>, event_tx: Sender<PaxosEvent>) -> Self {
         let pre_vote_board = DashMap::new();
         for peer_id in peer_ids.iter() {
             pre_vote_board.insert(*peer_id, None);
         }
+        let cd_clock = CountDownClock::new(move || {
+            if let Err(e) = event_tx.try_send(PaxosEvent::PreVoteCampaignExpired) {
+                eprintln!("Error: Failed to send PreVoteCampaignExpired event: {e}");
+            }
+        });
         Self {
             pre_vote_board,
-            pre_vote_campaign_deadline: None,
             voted_for_id: None,
+            prevote_cd_clock: cd_clock,
         }
     }
 
@@ -46,9 +52,8 @@ impl PreCandidate {
             .dispatch_prevote_request(request)
             .await?;
 
-        // Set a deadline for the whole pre-vote campaign to 3 seconds
-        self.pre_vote_campaign_deadline =
-            Some(time::Instant::now() + time::Duration::from_millis(3000));
+        // Spawn a background task that fires PreVoteCampaignExpired after 3 seconds if not completed
+        self.prevote_cd_clock.start_fixed(3000);
         Ok(())
     }
 
@@ -78,7 +83,7 @@ impl PreCandidate {
             );
 
             // Transition to a leader candidate
-            let mut candidate = Candidate::new(ctx.get_peer_ids());
+            let mut candidate = Candidate::new(ctx.get_peer_ids(), ctx.get_event_sender());
 
             // Increment the current term number
             ctx.increment_current_term();
@@ -97,14 +102,6 @@ impl PreCandidate {
             return Ok(Some(Err(Follower::new(None, ctx.get_event_sender()))));
         }
 
-        // Check if the pre-vote campaign has timed out
-        if self.has_pre_vote_campaign_timeout() {
-            println!(
-                "{} Warning: Pre-vote campaign timeout occurred, stepping down as a follower",
-                ctx.log_prefix("PreCandidate")
-            );
-            return Ok(Some(Err(Follower::new(None, ctx.get_event_sender()))));
-        }
         Ok(None)
     }
 
@@ -233,11 +230,12 @@ impl PreCandidate {
         // + 1 accounts for the pre-candidate's implicit self-vote, which is not in the board
         (num_matched + 1) >= (self.pre_vote_board.len() + 1) / 2 + 1
     }
+}
 
-    // Checks if the pre-vote campaign has timed out to avoid a potential infinite hang
-    fn has_pre_vote_campaign_timeout(&self) -> bool {
-        self.pre_vote_campaign_deadline.is_some()
-            && time::Instant::now() > self.pre_vote_campaign_deadline.unwrap()
+impl Drop for PreCandidate {
+    fn drop(&mut self) {
+        // Explicitly cancel so the countdown task is always stopped when the pre-candidate transitions.
+        self.prevote_cd_clock.cancel();
     }
 }
 
@@ -249,9 +247,18 @@ impl PaxosRole for PreCandidate {
         ctx: Arc<PaxosSharedContext>,
     ) -> Result<PaxosState, Box<dyn Error + Send + Sync>> {
         match event {
-            PaxosEvent::LeaderLeaseExpired | PaxosEvent::ElectionCountdownExpired => {
+            PaxosEvent::LeaderLeaseExpired
+            | PaxosEvent::ElectionCountdownExpired
+            | PaxosEvent::VoteCampaignExpired => {
                 // Already in a leader election process, ignore these events
                 Ok(PaxosState::PreCandidate(self))
+            }
+            PaxosEvent::PreVoteCampaignExpired => {
+                println!(
+                    "{} Warning: Pre-vote campaign timed out, stepping down as follower",
+                    ctx.log_prefix("PreCandidate")
+                );
+                Ok(PaxosState::Follower(Follower::new(None, ctx.get_event_sender())))
             }
             PaxosEvent::PreVoteRequestReceived(pre_vote_command) => {
                 let request = pre_vote_command.get_request();
@@ -276,6 +283,14 @@ impl PaxosRole for PreCandidate {
             }
             PaxosEvent::VoteResponseReceived(response) => {
                 self.handle_vote_response(response, &ctx);
+                Ok(PaxosState::PreCandidate(self))
+            }
+            PaxosEvent::ReplicateWriteRequestReceived(_command) => {
+                // Pre-candidate is in the middle of a pre-vote campaign, ignore replicate write requests
+                Ok(PaxosState::PreCandidate(self))
+            }
+            PaxosEvent::ReplicateWriteResponseReceived(_response) => {
+                // Pre-candidate is in the middle of a pre-vote campaign, ignore replicate write responses
                 Ok(PaxosState::PreCandidate(self))
             }
         }

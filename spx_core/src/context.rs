@@ -1,6 +1,6 @@
 use crate::models::LogEntry;
 use crate::{PaxosDispatcher, PaxosEvent, PreVoteRequest, VoteRequest};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use dashmap::DashSet;
 use spx_lib::true_time::TrueTime;
 use std::sync::Arc;
@@ -29,14 +29,22 @@ pub struct PaxosSharedContext {
     // The slot number of the last log entry persisted by this member (node)
     last_log_slot: AtomicU32,
 
-    // The time at which the leader's lease expires
+    // The local expiry time of the leader lease. Each node computes this independently
+    // of its own clock rather than sharing a single timestamp across nodes. Clocks on
+    // different machines drift at different rates (clock skew), so the same wall-clock
+    // timestamp can fall in the past on one node while still in the future on another,
+    // using a shared expiry would cause nodes to disagree on whether the lease is still
+    // valid, breaking the safety guarantee that only one leader holds the lease at a time
     leader_lease_expiry_time: RwLock<Option<DateTime<Utc>>>,
 
     // A notification channel to notify the update of the leader lease
     leader_lease_update_notify: Notify,
 
     // The log entries that have been persisted but not yet committed by this member (node)
-    uncommitted_entries: RwLock<Vec<LogEntry>>,
+    uncommitted_logs: RwLock<Vec<LogEntry>>,
+
+    // The lease duration used for Paxos leases, default to 10 seconds
+    lease_length: Duration,
 
     // The dispatcher for dispatching Paxos requests to other Paxos members
     dispatcher: Arc<dyn PaxosDispatcher>,
@@ -59,9 +67,11 @@ impl PaxosSharedContext {
             t_safe: RwLock::new(None),
             last_log_term: AtomicU32::new(0),
             last_log_slot: AtomicU32::new(0),
-            leader_lease_expiry_time: RwLock::new(None),
+            // Initialize to an already-expired time so LeaderLeaseExpired fires immediately on startup
+            leader_lease_expiry_time: RwLock::new(Some(DateTime::<Utc>::UNIX_EPOCH)),
             leader_lease_update_notify: Notify::new(),
-            uncommitted_entries: RwLock::new(Vec::new()),
+            uncommitted_logs: RwLock::new(Vec::new()),
+            lease_length: Duration::seconds(10),
             dispatcher,
             event_tx,
         }
@@ -121,7 +131,11 @@ impl PaxosSharedContext {
     }
 
     pub async fn get_uncommitted_entries(&self) -> Vec<LogEntry> {
-        self.uncommitted_entries.read().await.clone()
+        self.uncommitted_logs.read().await.clone()
+    }
+
+    pub fn get_lease_length(&self) -> Duration {
+        self.lease_length
     }
 
     pub async fn update_leader_lease_expiry_time(&self, expiry: DateTime<Utc>) {
@@ -141,15 +155,24 @@ impl PaxosSharedContext {
 
     pub async fn wait_until_leader_lease_expired(&self) {
         loop {
-            let Some(lease) = *self.leader_lease_expiry_time.read().await else {
-                return;
-            };
-            tokio::select! {
-                // Wait until the current time is after the lease expiry time
-                _ = TrueTime::commit_wait(lease) => return,
-
-                // Fetch the new lease expiry once it's been updated
-                _ = self.leader_lease_update_notify.notified() => continue,
+            let lease = *self.leader_lease_expiry_time.read().await;
+            match lease {
+                // No lease set; block until one is written
+                None => {
+                    self.leader_lease_update_notify.notified().await;
+                }
+                // Lease is set; wait for it to expire or for an update
+                Some(expiry) => {
+                    tokio::select! {
+                        biased;
+                        _ = self.leader_lease_update_notify.notified() => continue,
+                        _ = TrueTime::commit_wait(expiry) => {
+                            // Clear the lease so the next iteration blocks until a new one is set
+                            *self.leader_lease_expiry_time.write().await = None;
+                            return;
+                        }
+                    }
+                }
             }
         }
     }
