@@ -1,12 +1,11 @@
 use crate::configs::MemberConfig;
 use crate::grpc::util;
-use spx_core::{PaxosDispatcher, PaxosEvent, PreVoteRequest, ReplicateWriteRequest, VoteRequest};
+use spx_core::{AcceptRequest, PaxosDispatcher, PaxosEvent, PreVoteRequest, VoteRequest};
 use spx_protocol::paxos_client::PaxosClient;
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
 use tokio::sync::OnceCell;
 use tokio::sync::mpsc::Sender;
 use tonic::async_trait;
@@ -84,22 +83,6 @@ impl GrpcPaxosDispatcher {
         Ok(())
     }
 
-    async fn dispatch_request_with_callback<F, C>(
-        &self,
-        action: F,
-        on_dispatch: C,
-    ) -> Result<(), Box<dyn Error + Send + Sync>>
-    where
-        F: FnMut(PaxosClient<Channel>) -> GrpcActionFuture + Send + Sync + Clone + 'static,
-        C: Fn(Uuid) + Send + Sync + 'static,
-    {
-        for (id, _) in self.paxos_clients.iter() {
-            let client = self.get_paxos_client(*id).await?;
-            self.spawn_request_task(*id, client, action.clone());
-            on_dispatch(*id);
-        }
-        Ok(())
-    }
 }
 
 #[async_trait]
@@ -128,52 +111,43 @@ impl PaxosDispatcher for GrpcPaxosDispatcher {
     async fn dispatch_vote_request(
         &self,
         request: VoteRequest,
-        on_dispatch: Arc<dyn Fn(Uuid) + Send + Sync>,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        self.dispatch_request_with_callback(
-            move |mut client| {
-                let request = request.clone();
-                Box::pin(async move {
-                    let request = util::vote_request_to_proto(request);
-                    let response = match client.request_vote(request).await {
-                        Ok(response) => response,
-                        Err(e) => return Err(format!("Vote request failed {:?}", e).into()),
-                    };
-                    Ok(PaxosEvent::VoteResponseReceived(
-                        util::vote_response_from_proto(response.into_inner()),
-                    ))
-                })
-            },
-            move |member_id| on_dispatch(member_id),
-        )
+        self.dispatch_request(move |mut client| {
+            let request = request.clone();
+            Box::pin(async move {
+                let request = util::vote_request_to_proto(request);
+                let response = match client.request_vote(request).await {
+                    Ok(response) => response,
+                    Err(e) => return Err(format!("Vote request failed {:?}", e).into()),
+                };
+                Ok(PaxosEvent::VoteResponseReceived(
+                    util::vote_response_from_proto(response.into_inner()),
+                ))
+            })
+        })
         .await?;
         Ok(())
     }
 
-    async fn dispatch_replicate_write_request(
+    async fn dispatch_accept_request(
         &self,
-        request: ReplicateWriteRequest,
-        on_dispatch: Arc<dyn Fn(Uuid) + Send + Sync>,
+        member_id: Uuid,
+        request: AcceptRequest,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        self.dispatch_request_with_callback(
-            move |mut client| {
-                let request = request.clone();
-                Box::pin(async move {
-                    let proto_request = util::replicate_write_request_to_proto(request);
-                    let response = match client.replicate_write(proto_request).await {
-                        Ok(response) => response,
-                        Err(e) => {
-                            return Err(format!("Replicate write request failed {:?}", e).into());
-                        }
-                    };
-                    Ok(PaxosEvent::ReplicateWriteResponseReceived(
-                        util::replicate_write_response_from_proto(response.into_inner()),
-                    ))
-                })
-            },
-            move |member_id| on_dispatch(member_id),
-        )
-        .await?;
+        let client = self.get_paxos_client(member_id).await?;
+        self.spawn_request_task(member_id, client, move |mut client| {
+            let request = request.clone();
+            Box::pin(async move {
+                let proto_request = util::accept_request_to_proto(request);
+                let response = match client.accept(proto_request).await {
+                    Ok(response) => response,
+                    Err(e) => return Err(format!("Accept request failed {:?}", e).into()),
+                };
+                Ok(PaxosEvent::AcceptResponseReceived(
+                    util::accept_response_from_proto(response.into_inner()),
+                ))
+            })
+        });
         Ok(())
     }
 }

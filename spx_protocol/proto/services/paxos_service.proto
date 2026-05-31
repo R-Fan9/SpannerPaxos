@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package spx.services;
 
+import "messages/accept.proto";
 import "messages/save_write.proto";
 import "messages/replicate_write.proto";
 import "messages/commit_write.proto";
@@ -23,4 +24,7 @@ service Paxos {
 
     // Sent by leader candidate to grant votes from members to become a leader
     rpc RequestVote (messages.RequestVoteRequest) returns (messages.RequestVoteResponse);
+
+    // Sent by leader to replicate log entries and advance the commit index on followers
+    rpc Accept (messages.AcceptRequest) returns (messages.AcceptResponse);
 }

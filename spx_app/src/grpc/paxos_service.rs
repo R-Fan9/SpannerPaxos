@@ -83,4 +83,15 @@ impl Paxos for GrpcPaxosService {
             .await?;
         Ok(Response::new(util::vote_response_to_proto(response)))
     }
+
+    async fn accept(
+        &self,
+        request: Request<spx_protocol::AcceptRequest>,
+    ) -> Result<Response<spx_protocol::AcceptResponse>, Status> {
+        let request = util::accept_request_from_proto(request.into_inner());
+        let response = self
+            .dispatch(request, PaxosEvent::AcceptRequestReceived)
+            .await?;
+        Ok(Response::new(util::accept_response_to_proto(response)))
+    }
 }

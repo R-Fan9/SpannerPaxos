@@ -1,47 +1,69 @@
 use crate::models::LogEntry;
 use crate::{PaxosDispatcher, PaxosEvent, PreVoteRequest, VoteRequest};
 use chrono::{DateTime, Duration, Utc};
-use dashmap::DashSet;
 use spx_lib::true_time::TrueTime;
+use spx_lib::write_ahead_log::WriteAheadLog;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{Notify, RwLock};
 use uuid::Uuid;
 
-// A thread-safe struct that contains shared context across all states of a Paxos group member
+// Holds the shared lease state between PaxosSharedContext and the LeaseWatcher.
+// Wrapped in Arc so both sides can cheaply clone a handle without borrowing ctx.
+struct LeaseState {
+    expiry: RwLock<Option<DateTime<Utc>>>,
+    notify: Notify,
+}
+
+// A lightweight handle used in tokio::select! to wait for lease expiration without
+// borrowing PaxosSharedContext, allowing &mut ctx to be passed into event handlers.
+pub struct LeaseWatcher(Arc<LeaseState>);
+
+impl LeaseWatcher {
+    pub async fn wait_until_expired(&self) {
+        loop {
+            let lease = *self.0.expiry.read().await;
+            match lease {
+                None => {
+                    self.0.notify.notified().await;
+                }
+                Some(expiry) => {
+                    tokio::select! {
+                        biased;
+                        _ = self.0.notify.notified() => continue,
+                        _ = TrueTime::commit_wait(expiry) => {
+                            *self.0.expiry.write().await = None;
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 pub struct PaxosSharedContext {
     // The unique identifier for this member (node)
     member_id: Uuid,
 
     // The unique identifiers of the other members (nodes) in the Paxos group
-    peer_ids: DashSet<Uuid>,
+    peer_ids: HashSet<Uuid>,
 
     // The term (ballot) number that this member (node) is currently in
-    term: AtomicU32,
+    term: u32,
 
     // The time at which this member (node) is safe to serve a read request
-    t_safe: RwLock<Option<DateTime<Utc>>>,
+    t_safe: Option<DateTime<Utc>>,
 
-    // The term number of the last log entry persisted by this member (node)
-    last_log_term: AtomicU32,
-
-    // The slot number of the last log entry persisted by this member (node)
-    last_log_slot: AtomicU32,
-
-    // The local expiry time of the leader lease. Each node computes this independently
-    // of its own clock rather than sharing a single timestamp across nodes. Clocks on
-    // different machines drift at different rates (clock skew), so the same wall-clock
-    // timestamp can fall in the past on one node while still in the future on another,
-    // using a shared expiry would cause nodes to disagree on whether the lease is still
-    // valid, breaking the safety guarantee that only one leader holds the lease at a time
-    leader_lease_expiry_time: RwLock<Option<DateTime<Utc>>>,
-
-    // A notification channel to notify the update of the leader lease
-    leader_lease_update_notify: Notify,
-
-    // The log entries that have been persisted but not yet committed by this member (node)
-    uncommitted_logs: RwLock<Vec<LogEntry>>,
+    // The local expiry time of the leader lease and its update notification channel.
+    // Wrapped in Arc so a LeaseWatcher can hold a handle without borrowing ctx,
+    // allowing &mut ctx to be passed into event handlers inside tokio::select!.
+    // Each node computes the expiry independently of its own clock rather than sharing
+    // a single timestamp across nodes — clock skew means the same wall-clock timestamp
+    // can fall in the past on one node while still in the future on another, so a shared
+    // expiry would break the safety guarantee that only one leader holds the lease at a time.
+    lease: Arc<LeaseState>,
 
     // The lease duration used for Paxos leases, default to 10 seconds
     lease_length: Duration,
@@ -51,30 +73,53 @@ pub struct PaxosSharedContext {
 
     // The sender for posting Paxos events back into the event loop internally
     event_tx: Sender<PaxosEvent>,
+
+    // The term number of the last log entry persisted by this member (node)
+    last_log_term: u32,
+
+    // The slot number of the last log entry persisted by this member (node)
+    last_log_slot: u32,
+
+    // The slot number of the last log entry committed by this member (node)
+    committed_slot: u32,
+
+    // The log entries that have been persisted but not yet committed by this member (node)
+    uncommitted_logs: BTreeMap<u32, LogEntry>,
+
+    // The write-ahead log service for persisting log entries
+    wal: WriteAheadLog,
 }
 
 impl PaxosSharedContext {
     pub fn new(
         member_id: Uuid,
-        peer_ids: DashSet<Uuid>,
+        peer_ids: HashSet<Uuid>,
         dispatcher: Arc<dyn PaxosDispatcher>,
         event_tx: Sender<PaxosEvent>,
     ) -> Self {
         Self {
             member_id,
             peer_ids,
-            term: AtomicU32::new(0),
-            t_safe: RwLock::new(None),
-            last_log_term: AtomicU32::new(0),
-            last_log_slot: AtomicU32::new(0),
+            term: 0,
+            t_safe: None,
             // Initialize to an already-expired time so LeaderLeaseExpired fires immediately on startup
-            leader_lease_expiry_time: RwLock::new(Some(DateTime::<Utc>::UNIX_EPOCH)),
-            leader_lease_update_notify: Notify::new(),
-            uncommitted_logs: RwLock::new(Vec::new()),
+            lease: Arc::new(LeaseState {
+                expiry: RwLock::new(Some(DateTime::<Utc>::UNIX_EPOCH)),
+                notify: Notify::new(),
+            }),
+            last_log_term: 0,
+            last_log_slot: 0,
+            committed_slot: 0,
+            uncommitted_logs: BTreeMap::new(),
             lease_length: Duration::seconds(10),
             dispatcher,
             event_tx,
+            wal: WriteAheadLog::new(),
         }
+    }
+
+    pub fn lease_watcher(&self) -> LeaseWatcher {
+        LeaseWatcher(Arc::clone(&self.lease))
     }
 
     pub fn get_event_sender(&self) -> Sender<PaxosEvent> {
@@ -86,24 +131,19 @@ impl PaxosSharedContext {
     }
 
     pub fn get_current_term(&self) -> u32 {
-        // Using Acquire ordering here to ensure the freshest value is read
-        self.term.load(Ordering::Acquire)
+        self.term
     }
 
     pub fn get_next_term(&self) -> u32 {
-        // Using Acquire ordering here to ensure the freshest value is read
-        self.term.load(Ordering::Acquire) + 1
+        self.term + 1
     }
 
-    pub fn set_current_term(&self, term: u32) {
-        // Using Release ordering here to ensure the new value is visible to other threads immediately
-        self.term.store(term, Ordering::Release);
+    pub fn set_current_term(&mut self, term: u32) {
+        self.term = term;
     }
 
-    pub fn increment_current_term(&self) {
-        // Using Release ordering here as the return value of fetch_add is not used
-        // Only need to ensure the new value is immediately visible to other threads
-        self.term.fetch_add(1, Ordering::Release);
+    pub fn increment_current_term(&mut self) {
+        self.term += 1;
     }
 
     pub fn get_current_member_id(&self) -> Uuid {
@@ -111,27 +151,43 @@ impl PaxosSharedContext {
     }
 
     pub fn log_prefix(&self, role: &str) -> String {
-        format!(
-            "[{} {}, term {}]",
-            role,
-            self.member_id,
-            self.get_current_term()
-        )
+        format!("[{} {}, term {}]", role, self.member_id, self.term)
     }
 
-    pub fn get_peer_ids(&self) -> &DashSet<Uuid> {
+    pub fn get_peer_ids(&self) -> &HashSet<Uuid> {
         &self.peer_ids
     }
 
     pub fn get_last_log_term(&self) -> u32 {
-        self.last_log_term.load(Ordering::SeqCst)
-    }
-    pub fn get_last_log_slot(&self) -> u32 {
-        self.last_log_slot.load(Ordering::SeqCst)
+        self.last_log_term
     }
 
-    pub async fn get_uncommitted_entries(&self) -> Vec<LogEntry> {
-        self.uncommitted_logs.read().await.clone()
+    pub fn get_last_log_slot(&self) -> u32 {
+        self.last_log_slot
+    }
+
+    pub fn get_committed_slot(&self) -> u32 {
+        self.committed_slot
+    }
+
+    pub fn set_committed_slot(&mut self, slot: u32) {
+        self.committed_slot = slot;
+    }
+
+    pub fn set_last_log_slot(&mut self, slot: u32) {
+        self.last_log_slot = slot;
+    }
+
+    pub fn set_last_log_term(&mut self, term: u32) {
+        self.last_log_term = term;
+    }
+
+    pub fn get_uncommitted_logs(&self) -> &BTreeMap<u32, LogEntry> {
+        &self.uncommitted_logs
+    }
+
+    pub fn get_uncommitted_logs_mut(&mut self) -> &mut BTreeMap<u32, LogEntry> {
+        &mut self.uncommitted_logs
     }
 
     pub fn get_lease_length(&self) -> Duration {
@@ -139,59 +195,40 @@ impl PaxosSharedContext {
     }
 
     pub async fn update_leader_lease_expiry_time(&self, expiry: DateTime<Utc>) {
-        let mut lease = self.leader_lease_expiry_time.write().await;
-        *lease = Some(expiry);
-
-        // Notify the leader lease expiration check task that the lease has been updated
-        self.leader_lease_update_notify.notify_one();
+        *self.lease.expiry.write().await = Some(expiry);
+        self.lease.notify.notify_one();
     }
 
     pub async fn is_leader_lease_expired(&self) -> bool {
-        let Some(expiry) = *self.leader_lease_expiry_time.read().await else {
+        let Some(expiry) = *self.lease.expiry.read().await else {
             return true;
         };
         TrueTime::after(expiry)
     }
 
-    pub async fn wait_until_leader_lease_expired(&self) {
-        loop {
-            let lease = *self.leader_lease_expiry_time.read().await;
-            match lease {
-                // No lease set; block until one is written
-                None => {
-                    self.leader_lease_update_notify.notified().await;
-                }
-                // Lease is set; wait for it to expire or for an update
-                Some(expiry) => {
-                    tokio::select! {
-                        biased;
-                        _ = self.leader_lease_update_notify.notified() => continue,
-                        _ = TrueTime::commit_wait(expiry) => {
-                            // Clear the lease so the next iteration blocks until a new one is set
-                            *self.leader_lease_expiry_time.write().await = None;
-                            return;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     pub fn create_pre_vote(&self) -> PreVoteRequest {
         PreVoteRequest {
-            member_id: self.get_current_member_id(),
-            next_term: self.get_next_term(),
-            last_log_term: self.get_last_log_term(),
-            last_log_slot: self.get_last_log_slot(),
+            member_id: self.member_id,
+            next_term: self.term + 1,
+            last_log_term: self.last_log_term,
+            last_log_slot: self.last_log_slot,
         }
     }
 
     pub fn create_vote(&self) -> VoteRequest {
         VoteRequest {
-            member_id: self.get_current_member_id(),
-            term: self.get_current_term(),
-            last_log_term: self.get_last_log_term(),
-            last_log_slot: self.get_last_log_slot(),
+            member_id: self.member_id,
+            term: self.term,
+            last_log_term: self.last_log_term,
+            last_log_slot: self.last_log_slot,
         }
+    }
+
+    pub fn get_wal(&self) -> &WriteAheadLog {
+        &self.wal
+    }
+
+    pub fn get_wal_mut(&mut self) -> &mut WriteAheadLog {
+        &mut self.wal
     }
 }

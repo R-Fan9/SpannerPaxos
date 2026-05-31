@@ -1,7 +1,6 @@
 use crate::state_machine::PaxosState;
 use crate::{PaxosEvent, PaxosSharedContext};
 use std::error::Error;
-use std::sync::Arc;
 use tonic::async_trait;
 
 mod candidate;
@@ -22,6 +21,6 @@ pub trait PaxosRole {
     async fn handle_event(
         self,
         event: PaxosEvent,
-        ctx: Arc<PaxosSharedContext>,
+        ctx: &mut PaxosSharedContext,
     ) -> Result<PaxosState, Box<dyn Error + Send + Sync>>;
 }

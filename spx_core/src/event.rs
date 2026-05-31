@@ -1,4 +1,4 @@
-use crate::{PaxosCommand, PreVoteRequest, PreVoteResponse, ReplicateWriteRequest, ReplicateWriteResponse, VoteRequest, VoteResponse};
+use crate::{AcceptRequest, AcceptResponse, PaxosCommand, PreVoteRequest, PreVoteResponse, VoteRequest, VoteResponse};
 use std::fmt;
 
 pub enum PaxosEvent {
@@ -26,11 +26,11 @@ pub enum PaxosEvent {
     // This leader candidate has received a vote response from another member
     VoteResponseReceived(VoteResponse),
 
-    // This follower has received a replicate write request from the leader
-    ReplicateWriteRequestReceived(PaxosCommand<ReplicateWriteRequest, ReplicateWriteResponse>),
+    // This follower has received an accept (AppendEntries) request from the leader
+    AcceptRequestReceived(PaxosCommand<AcceptRequest, AcceptResponse>),
 
-    // This leader has received a replicate write response from another member
-    ReplicateWriteResponseReceived(ReplicateWriteResponse),
+    // This leader has received an accept response from a follower
+    AcceptResponseReceived(AcceptResponse),
 }
 
 impl PaxosEvent {
@@ -49,8 +49,8 @@ impl PaxosEvent {
             PaxosEvent::PreVoteResponseReceived(r) => Some(r.term),
             PaxosEvent::VoteRequestReceived(cmd) => Some(cmd.get_request().term),
             PaxosEvent::VoteResponseReceived(r) => Some(r.term),
-            PaxosEvent::ReplicateWriteRequestReceived(cmd) => Some(cmd.get_request().term),
-            PaxosEvent::ReplicateWriteResponseReceived(r) => Some(r.term),
+            PaxosEvent::AcceptRequestReceived(cmd) => Some(cmd.get_request().term as u32),
+            PaxosEvent::AcceptResponseReceived(r) => Some(r.term as u32),
         }
     }
 }

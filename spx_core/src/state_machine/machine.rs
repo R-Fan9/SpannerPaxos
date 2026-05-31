@@ -1,10 +1,10 @@
 use super::PaxosState;
 use crate::PaxosDispatcher;
+use crate::context::PaxosSharedContext;
 use crate::roles::Follower;
-use crate::{PaxosEvent, PaxosSharedContext};
-use dashmap::DashSet;
-use std::collections::HashSet;
+use crate::PaxosEvent;
 use spx_lib::worker_runner::Worker;
+use std::collections::HashSet;
 use std::error::Error;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -15,8 +15,11 @@ use tonic::async_trait;
 use uuid::Uuid;
 
 pub struct PaxosStateMachine {
+    member_id: Uuid,
+    peer_ids: HashSet<Uuid>,
+    dispatcher: Arc<dyn PaxosDispatcher>,
+    event_tx: Sender<PaxosEvent>,
     event_rx: Mutex<Receiver<PaxosEvent>>,
-    ctx: Arc<PaxosSharedContext>,
 }
 
 impl PaxosStateMachine {
@@ -27,11 +30,12 @@ impl PaxosStateMachine {
         event_tx: Sender<PaxosEvent>,
         event_rx: Receiver<PaxosEvent>,
     ) -> Self {
-        let peer_ids: DashSet<Uuid> = peer_ids.into_iter().collect();
-        let ctx = PaxosSharedContext::new(member_id, peer_ids, dispatcher, event_tx);
         Self {
+            member_id,
+            peer_ids,
+            dispatcher,
+            event_tx,
             event_rx: Mutex::new(event_rx),
-            ctx: Arc::new(ctx),
         }
     }
 
@@ -39,11 +43,16 @@ impl PaxosStateMachine {
         &self,
         cancellation_token: CancellationToken,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        // Start as a follower
-        let mut current_state = PaxosState::Follower(Follower::new(None, self.ctx.get_event_sender()));
-
-        // Start the Paxos state machine loop
+        let mut ctx = PaxosSharedContext::new(
+            self.member_id,
+            self.peer_ids.clone(),
+            self.dispatcher.clone(),
+            self.event_tx.clone(),
+        );
+        let lease_watcher = ctx.lease_watcher();
+        let mut current_state = PaxosState::Follower(Follower::new(None));
         let mut event_rx = self.event_rx.lock().await;
+
         loop {
             tokio::select! {
                 // This ensures the cancellation branch is checked first if multiple branches are ready
@@ -55,20 +64,21 @@ impl PaxosStateMachine {
                 }
 
                 // Continuously wait for leader lease expiration
-                _ = self.ctx.wait_until_leader_lease_expired() => {
-                        current_state = current_state.process_event(PaxosEvent::LeaderLeaseExpired, self.ctx.clone())
+                _ = lease_watcher.wait_until_expired() => {
+                    current_state = current_state
+                        .process_event(PaxosEvent::LeaderLeaseExpired, &mut ctx)
                         .await
                         .expect("Failed to process leader lease expiration");
                 }
 
                 // Listen to the next incoming Paxos event from the channel
                 maybe_event = event_rx.recv() => {
-                    match maybe_event{
+                    match maybe_event {
                         Some(event) => {
                             current_state = current_state
-                            .process_event(event, self.ctx.clone())
-                            .await
-                            .expect("Failed to process Paxos event");
+                                .process_event(event, &mut ctx)
+                                .await
+                                .expect("Failed to process Paxos event");
                         }
 
                         // No Paxos event received, indicating the event channel might have been closed
@@ -97,7 +107,7 @@ impl Worker for PaxosStateMachine {
 
     async fn on_stop(
         &self,
-        cancellation_token: CancellationToken,
+        _cancellation_token: CancellationToken,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         todo!()
     }

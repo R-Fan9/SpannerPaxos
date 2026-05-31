@@ -5,70 +5,67 @@ use crate::{
     PaxosEvent, PaxosSharedContext, PreVoteResponse, VoteOutcome, VoteRejection, VoteResponse,
 };
 use chrono::{DateTime, Utc};
-use dashmap::{DashMap, DashSet};
 use spx_lib::count_down_clock::CountDownClock;
 use spx_lib::true_time::TrueTime;
+use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
-use std::sync::Arc;
-use tokio::sync::mpsc::Sender;
 use tonic::async_trait;
 use uuid::Uuid;
 
 pub struct Candidate {
-    // A concurrent map of member IDs to their vote responses
-    vote_board: DashMap<Uuid, Option<VoteResponse>>,
+    // Map of member IDs to their vote responses
+    vote_board: HashMap<Uuid, Option<VoteResponse>>,
 
     // Map of member ID to their WAL log positions, carried over to Leader on election win
-    score_board: DashMap<Uuid, LogPosition>,
+    score_board: HashMap<Uuid, LogPosition>,
 
-    // Map of log slot to the winning uncommitted entry, resolved by highest term
-    merged_uncommit_logs: DashMap<u32, LogEntry>,
-
-    // The time at which the vote request was dispatched to each member
-    vote_dispatch_times: Arc<DashMap<Uuid, DateTime<Utc>>>,
+    // The time at which dispatch_vote was called; guaranteed to be <= any individual
+    // per-member dispatch time, so it is a safe conservative base for the leader lease
+    vote_dispatch_time: Option<DateTime<Utc>>,
 
     // A count-down clock that fires VoteCampaignExpired after a fixed delay
     vote_cd_clock: CountDownClock,
+
+    // Uncommitted log entries collected from vote promises; flushed to ctx only on quorum
+    pending_uncommitted_logs: BTreeMap<u32, LogEntry>,
 }
 
 impl Candidate {
-    pub fn new(peer_ids: &DashSet<Uuid>, event_tx: Sender<PaxosEvent>) -> Self {
-        let vote_board = DashMap::new();
-        for peer_id in peer_ids.iter() {
-            vote_board.insert(*peer_id, None);
-        }
-        let vote_cd_clock = CountDownClock::new(move || {
-            if let Err(e) = event_tx.try_send(PaxosEvent::VoteCampaignExpired) {
-                eprintln!("Error: Failed to send VoteCampaignExpired event: {e}");
-            }
-        });
+    pub fn new(ctx: &PaxosSharedContext) -> Self {
+        let next_slot = ctx.get_last_log_slot() + 1;
+        let vote_board = ctx.get_peer_ids().iter().map(|id| (*id, None)).collect();
+        let score_board = ctx
+            .get_peer_ids()
+            .iter()
+            .map(|id| (*id, LogPosition::with_next_slot(next_slot)))
+            .collect();
         Self {
             vote_board,
-            score_board: DashMap::new(),
-            merged_uncommit_logs: DashMap::new(),
-            vote_dispatch_times: Arc::new(DashMap::new()),
-            vote_cd_clock,
+            score_board,
+            vote_dispatch_time: None,
+            vote_cd_clock: CountDownClock::new(),
+            pending_uncommitted_logs: BTreeMap::new(),
         }
     }
 
     pub async fn dispatch_vote(
         &mut self,
-        ctx: Arc<PaxosSharedContext>,
+        ctx: &PaxosSharedContext,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        // Record before dispatch — this time is guaranteed to be <= any per-member send time
+        self.vote_dispatch_time = Some(TrueTime::now().earliest);
+
         // Dispatch vote requests to other members to start the vote campaign
         let request = ctx.create_vote();
-        let vote_dispatch_times = self.vote_dispatch_times.clone();
-        ctx.get_dispatcher()
-            .dispatch_vote_request(
-                request,
-                Arc::new(move |member_id| {
-                    vote_dispatch_times.insert(member_id, TrueTime::now().earliest);
-                }),
-            )
-            .await?;
+        ctx.get_dispatcher().dispatch_vote_request(request).await?;
 
         // Spawn a background task that fires VoteCampaignExpired after 3 seconds if not completed
-        self.vote_cd_clock.start_fixed(3000);
+        let event_tx = ctx.get_event_sender();
+        self.vote_cd_clock.start_fixed(3000, move || {
+            if let Err(e) = event_tx.try_send(PaxosEvent::VoteCampaignExpired) {
+                eprintln!("Error: Failed to send VoteCampaignExpired event: {e}");
+            }
+        });
         Ok(())
     }
 
@@ -107,7 +104,7 @@ impl Candidate {
     async fn handle_vote_response(
         &mut self,
         response: VoteResponse,
-        ctx: Arc<PaxosSharedContext>,
+        ctx: &mut PaxosSharedContext,
     ) -> Result<Option<Result<Leader, Follower>>, Box<dyn Error + Send + Sync>> {
         let member_id = response.member_id;
 
@@ -125,16 +122,12 @@ impl Candidate {
         self.vote_board.insert(member_id, Some(response.clone()));
 
         if let VoteOutcome::Promise(promise) = &response.outcome {
-            let trusted_match_slot = if promise.last_log_term == ctx.get_last_log_term() {
-                promise.last_log_slot
-            } else {
-                // The term of the last log from the promise is less than local last log term,
-                // The member might be writing logs at a stale term and would require a full log re-sync process when a leader is elected
-                0
-            };
-
-            self.score_board
-                .insert(member_id, LogPosition::from_match_slot(trusted_match_slot));
+            if promise.last_log_term == ctx.get_last_log_term() {
+                self.score_board
+                    .get_mut(&member_id)
+                    .expect("member must be in score board")
+                    .match_slot = promise.last_log_slot.min(ctx.get_last_log_slot());
+            }
 
             self.merge_uncommitted_logs(&promise.uncommitted_entries);
         }
@@ -142,8 +135,8 @@ impl Candidate {
         // Check if a quorum of members has granted votes
         if self.has_vote_quorum() {
             // Compute the leader lease expiry as the earliest vote dispatch time across the quorum
-            // plus the lease length — this is guaranteed to be <= any quorum follower's vote lease expiry
-            let lease_expiry = self.compute_leader_lease_expiry(&ctx);
+            // plus the lease length, this is guaranteed to be <= any quorum follower's vote lease expiry
+            let lease_expiry = self.compute_leader_lease_expiry(ctx);
             ctx.update_leader_lease_expiry_time(lease_expiry).await;
 
             if !TrueTime::before(lease_expiry) {
@@ -151,7 +144,7 @@ impl Candidate {
                     "{} Warning: Leader lease already expired by the time quorum was reached, stepping down as follower",
                     ctx.log_prefix("Candidate")
                 );
-                return Ok(Some(Err(Follower::new(None, ctx.get_event_sender()))));
+                return Ok(Some(Err(Follower::new(None))));
             }
 
             println!(
@@ -159,20 +152,14 @@ impl Candidate {
                 ctx.log_prefix("Candidate")
             );
 
-            // Transition to a leader with a pre-constructed score board
+            // Transition to a leader with the pre-built score board
             let score_board = std::mem::take(&mut self.score_board);
             let leader = Leader::new(score_board);
 
-            // Merge local uncommitted entries into the candidate's collected logs, keeping the highest-term entry at each slot
-            let local_uncommitted = ctx.get_uncommitted_entries().await;
-            self.merge_uncommitted_logs(&local_uncommitted);
-            let uncommitted_logs: Vec<LogEntry> = std::mem::take(&mut self.merged_uncommit_logs)
-                .into_iter()
-                .map(|(_, entry)| entry)
-                .collect();
-
-            // Process the uncommitted logs found locally and reported by other members
-            leader.process_uncommitted_logs(uncommitted_logs);
+            // Quorum reached: flush the collected uncommitted entries into ctx before processing
+            self.flush_uncommitted_logs(ctx);
+            let mut leader = leader;
+            leader.process_uncommitted_logs(ctx).await?;
             return Ok(Some(Ok(leader)));
         }
 
@@ -182,55 +169,61 @@ impl Candidate {
                 "{} Warning: All members responded but quorum not reached, stepping down as a follower",
                 ctx.log_prefix("Candidate")
             );
-            return Ok(Some(Err(Follower::new(None, ctx.get_event_sender()))));
+            return Ok(Some(Err(Follower::new(None))));
         }
 
         Ok(None)
     }
 
-    // Returns the earliest dispatch time among quorum members that granted a vote promise,
-    // used to compute a conservative leader lease expiry
-    fn get_min_dispatch_time(&self) -> Option<DateTime<Utc>> {
-        self.vote_board
-            .iter()
-            .filter(|e| matches!(e.value(), Some(r) if matches!(r.outcome, VoteOutcome::Promise(_))))
-            .filter_map(|e| self.vote_dispatch_times.get(e.key()).map(|t| *t))
-            .min()
-    }
-
     fn compute_leader_lease_expiry(&self, ctx: &PaxosSharedContext) -> DateTime<Utc> {
-        let min_time = self
-            .get_min_dispatch_time()
-            .expect("vote dispatch times must be populated before computing leader lease expiry");
-        min_time + ctx.get_lease_length()
+        self.vote_dispatch_time
+            .expect("vote_dispatch_time must be set before computing leader lease expiry")
+            + ctx.get_lease_length()
     }
 
     fn has_all_vote_responses(&self) -> bool {
-        self.vote_board.iter().all(|entry| entry.value().is_some())
+        self.vote_board.values().all(|v| v.is_some())
     }
 
     fn has_vote_quorum(&self) -> bool {
         let num_matched = self
             .vote_board
-            .iter()
-            .filter(|entry| matches!(entry.value(), Some(r) if matches!(r.outcome, VoteOutcome::Promise(_))))
+            .values()
+            .filter(|v| matches!(v, Some(r) if matches!(r.outcome, VoteOutcome::Promise(_))))
             .count();
 
         // + 1 accounts for the candidate's implicit self-vote, which is not in the board
         (num_matched + 1) >= (self.vote_board.len() + 1) / 2 + 1
     }
 
-    fn merge_uncommitted_logs(&self, entries: &[LogEntry]) {
+    fn merge_uncommitted_logs(&mut self, entries: &[LogEntry]) {
         for entry in entries {
-            // Only include the uncommited log at a specific slot if its term number is higher than any other
-            // term number reported at the same slot
+            // Keep the highest-term entry seen at each slot across all promise responses
             let should_insert = self
-                .merged_uncommit_logs
+                .pending_uncommitted_logs
                 .get(&entry.slot)
                 .map_or(true, |existing| entry.term > existing.term);
 
             if should_insert {
-                self.merged_uncommit_logs.insert(entry.slot, entry.clone());
+                self.pending_uncommitted_logs.insert(entry.slot, entry.clone());
+            }
+        }
+    }
+
+    fn flush_uncommitted_logs(&self, ctx: &mut PaxosSharedContext) {
+        let committed_slot = ctx.get_committed_slot();
+        let ctx_logs = ctx.get_uncommitted_logs_mut();
+        for (slot, entry) in &self.pending_uncommitted_logs {
+            if *slot <= committed_slot {
+                continue;
+            }
+
+            let should_insert = ctx_logs
+                .get(slot)
+                .map_or(true, |existing| entry.term > existing.term);
+
+            if should_insert {
+                ctx_logs.insert(*slot, entry.clone());
             }
         }
     }
@@ -241,7 +234,7 @@ impl PaxosRole for Candidate {
     async fn handle_event(
         mut self,
         event: PaxosEvent,
-        ctx: Arc<PaxosSharedContext>,
+        ctx: &mut PaxosSharedContext,
     ) -> Result<PaxosState, Box<dyn Error + Send + Sync>> {
         match event {
             PaxosEvent::LeaderLeaseExpired
@@ -255,28 +248,25 @@ impl PaxosRole for Candidate {
                     "{} Warning: Vote campaign timed out, stepping down as follower",
                     ctx.log_prefix("Candidate")
                 );
-                Ok(PaxosState::Follower(Follower::new(
-                    None,
-                    ctx.get_event_sender(),
-                )))
+                Ok(PaxosState::Follower(Follower::new(None)))
             }
             PaxosEvent::PreVoteRequestReceived(command) => {
                 let request = command.get_request();
-                let response = util::handle_pre_vote_request(request, ctx.clone());
+                let response = util::handle_pre_vote_request(request, ctx);
                 command.send(response)?;
                 Ok(PaxosState::Candidate(self))
             }
             PaxosEvent::PreVoteResponseReceived(response) => {
-                self.handle_pre_vote_response(response, &ctx);
+                self.handle_pre_vote_response(response, ctx);
                 Ok(PaxosState::Candidate(self))
             }
             PaxosEvent::VoteRequestReceived(vote_command) => {
-                let response = self.handle_vote_request(&ctx);
+                let response = self.handle_vote_request(ctx);
                 vote_command.send(response)?;
                 Ok(PaxosState::Candidate(self))
             }
             PaxosEvent::VoteResponseReceived(response) => {
-                if let Some(result) = self.handle_vote_response(response, ctx.clone()).await? {
+                if let Some(result) = self.handle_vote_response(response, ctx).await? {
                     return match result {
                         Ok(leader) => Ok(PaxosState::Leader(leader)),
                         Err(follower) => Ok(PaxosState::Follower(follower)),
@@ -284,12 +274,8 @@ impl PaxosRole for Candidate {
                 }
                 Ok(PaxosState::Candidate(self))
             }
-            PaxosEvent::ReplicateWriteRequestReceived(_command) => {
-                // Candidate is in the middle of voting, ignore replicate write requests
-                Ok(PaxosState::Candidate(self))
-            }
-            PaxosEvent::ReplicateWriteResponseReceived(_response) => {
-                // Candidate is in the middle of voting, ignore replicate write responses
+            PaxosEvent::AcceptRequestReceived(_) | PaxosEvent::AcceptResponseReceived(_) => {
+                // Candidate is in the middle of voting, ignore accept messages
                 Ok(PaxosState::Candidate(self))
             }
         }

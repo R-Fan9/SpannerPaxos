@@ -13,16 +13,14 @@ const MIN_RANDOM_WAIT_MS: u64 = 30;
 /// Only one background task runs at a time; subsequent `start_*` calls are no-ops while running.
 pub struct CountDownClock {
     reset_notify: Arc<Notify>,
-    on_expire: Arc<dyn Fn() + Send + Sync + 'static>,
     token: CancellationToken,
     is_running: Arc<AtomicBool>,
 }
 
 impl CountDownClock {
-    pub fn new(on_expire: impl Fn() + Send + Sync + 'static) -> Self {
+    pub fn new() -> Self {
         Self {
             reset_notify: Arc::new(Notify::new()),
-            on_expire: Arc::new(on_expire),
             token: CancellationToken::new(),
             is_running: Arc::new(AtomicBool::new(false)),
         }
@@ -40,7 +38,7 @@ impl CountDownClock {
 
     /// Spawns a background task that waits a random duration between 30ms and `max_ms`,
     /// then fires the callback. No-op if a task is already running.
-    pub fn start_random(&self, max_ms: u64) {
+    pub fn start_random(&self, max_ms: u64, on_expire: impl Fn() + Send + Sync + 'static) {
         assert!(
             max_ms > MIN_RANDOM_WAIT_MS,
             "max_ms must be greater than {MIN_RANDOM_WAIT_MS}ms, got {max_ms}"
@@ -49,7 +47,6 @@ impl CountDownClock {
             return;
         }
         let reset_notify = self.reset_notify.clone();
-        let on_expire = self.on_expire.clone();
         let token = self.token.clone();
         let is_running = self.is_running.clone();
         tokio::spawn(async move {
@@ -71,12 +68,11 @@ impl CountDownClock {
 
     /// Spawns a background task that waits exactly `ms`, then fires the callback.
     /// No-op if a task is already running.
-    pub fn start_fixed(&self, ms: u64) {
+    pub fn start_fixed(&self, ms: u64, on_expire: impl Fn() + Send + Sync + 'static) {
         if self.is_running.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
             return;
         }
         let reset_notify = self.reset_notify.clone();
-        let on_expire = self.on_expire.clone();
         let token = self.token.clone();
         let is_running = self.is_running.clone();
         tokio::spawn(async move {

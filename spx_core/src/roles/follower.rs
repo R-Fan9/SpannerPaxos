@@ -7,8 +7,6 @@ use crate::{
 use spx_lib::count_down_clock::CountDownClock;
 use spx_lib::true_time::TrueTime;
 use std::error::Error;
-use std::sync::Arc;
-use tokio::sync::mpsc::Sender;
 use tonic::async_trait;
 use uuid::Uuid;
 
@@ -30,16 +28,11 @@ pub struct Follower {
 }
 
 impl Follower {
-    pub fn new(current_leader_id: Option<Uuid>, event_tx: Sender<PaxosEvent>) -> Self {
-        let cd_clock = CountDownClock::new(move || {
-            if let Err(e) = event_tx.try_send(PaxosEvent::ElectionCountdownExpired) {
-                eprintln!("Error: Failed to send ElectionCountdownExpired event: {e}");
-            }
-        });
+    pub fn new(current_leader_id: Option<Uuid>) -> Self {
         Self {
             current_leader_id,
             vote_record: None,
-            election_cd_clock: cd_clock,
+            election_cd_clock: CountDownClock::new(),
         }
     }
 
@@ -54,7 +47,7 @@ impl Follower {
     async fn handle_pre_vote_request(
         &self,
         request: PreVoteRequest,
-        ctx: Arc<PaxosSharedContext>,
+        ctx: &PaxosSharedContext,
     ) -> PreVoteResponse {
         let current_term = ctx.get_current_term();
         let current_member_id = ctx.get_current_member_id();
@@ -123,7 +116,7 @@ impl Follower {
     async fn handle_vote_request(
         &mut self,
         request: VoteRequest,
-        ctx: Arc<PaxosSharedContext>,
+        ctx: &PaxosSharedContext,
     ) -> VoteResponse {
         let current_term = ctx.get_current_term();
         let current_member_id = ctx.get_current_member_id();
@@ -219,7 +212,7 @@ impl Follower {
             outcome: VoteOutcome::Promise(VotePromise {
                 last_log_term: current_last_log_term,
                 last_log_slot: current_last_log_slot,
-                uncommitted_entries: ctx.get_uncommitted_entries().await,
+                uncommitted_entries: ctx.get_uncommitted_logs().values().cloned().collect(),
             }),
         }
     }
@@ -250,18 +243,19 @@ impl Follower {
 
     async fn handle_election_countdown_expired(
         &self,
-        ctx: Arc<PaxosSharedContext>,
+        ctx: &mut PaxosSharedContext,
     ) -> Result<Option<PreCandidate>, Box<dyn Error + Send + Sync>> {
         // Don't promote while the leader lease is still active; the countdown task has already
-        // finished so no new task is spawned here — LeaderLeaseExpired will restart the clock
+        // finished so no new task is spawned here. LeaderLeaseExpired will restart the count-down clock
         if !ctx.is_leader_lease_expired().await {
             return Ok(None);
         }
+
         println!(
             "{} Info: election countdown expired, transitioning to pre-candidate",
             ctx.log_prefix("Follower")
         );
-        let mut pre_candidate = PreCandidate::new(ctx.get_peer_ids(), ctx.get_event_sender());
+        let mut pre_candidate = PreCandidate::new(ctx);
         pre_candidate.dispatch_pre_vote(ctx).await?;
         Ok(Some(pre_candidate))
     }
@@ -292,7 +286,7 @@ impl PaxosRole for Follower {
     async fn handle_event(
         mut self,
         event: PaxosEvent,
-        ctx: Arc<PaxosSharedContext>,
+        ctx: &mut PaxosSharedContext,
     ) -> Result<PaxosState, Box<dyn Error + Send + Sync>> {
         match event {
             PaxosEvent::PreVoteCampaignExpired | PaxosEvent::VoteCampaignExpired => {
@@ -304,7 +298,12 @@ impl PaxosRole for Follower {
                     "{} Info: leader lease expired, starting election countdown",
                     ctx.log_prefix("Follower")
                 );
-                self.election_cd_clock.start_random(1000);
+                let event_tx = ctx.get_event_sender();
+                self.election_cd_clock.start_random(1000, move || {
+                    if let Err(e) = event_tx.try_send(PaxosEvent::ElectionCountdownExpired) {
+                        eprintln!("Error: Failed to send ElectionCountdownExpired event: {e}");
+                    }
+                });
                 Ok(PaxosState::Follower(self))
             }
             PaxosEvent::ElectionCountdownExpired => {
@@ -315,30 +314,30 @@ impl PaxosRole for Follower {
             }
             PaxosEvent::PreVoteRequestReceived(pre_vote_command) => {
                 let request = pre_vote_command.get_request();
-                let response = self.handle_pre_vote_request(request, ctx.clone()).await;
+                let response = self.handle_pre_vote_request(request, ctx).await;
                 pre_vote_command.send(response)?;
                 Ok(PaxosState::Follower(self))
             }
             PaxosEvent::PreVoteResponseReceived(response) => {
-                self.handle_pre_vote_response(response, &ctx).await;
+                self.handle_pre_vote_response(response, ctx).await;
                 Ok(PaxosState::Follower(self))
             }
             PaxosEvent::VoteRequestReceived(vote_command) => {
                 let request = vote_command.get_request();
-                let response = self.handle_vote_request(request, ctx.clone()).await;
+                let response = self.handle_vote_request(request, ctx).await;
                 vote_command.send(response)?;
                 Ok(PaxosState::Follower(self))
             }
             PaxosEvent::VoteResponseReceived(response) => {
-                self.handle_vote_response(response, &ctx).await;
+                self.handle_vote_response(response, ctx).await;
                 Ok(PaxosState::Follower(self))
             }
-            PaxosEvent::ReplicateWriteRequestReceived(_command) => {
-                // TODO: handle log replication from leader
+            PaxosEvent::AcceptRequestReceived(_command) => {
+                // TODO: handle accept (AppendEntries) request from the leader
                 todo!()
             }
-            PaxosEvent::ReplicateWriteResponseReceived(_response) => {
-                // Replicate write responses are handled by the leader, not follower
+            PaxosEvent::AcceptResponseReceived(_response) => {
+                // Accept responses are handled by the leader, not follower
                 Ok(PaxosState::Follower(self))
             }
         }

@@ -1,9 +1,8 @@
 use crate::{PreVoteRequest, PreVoteResponse, PaxosSharedContext};
-use std::sync::Arc;
 
 pub(super) fn handle_pre_vote_request(
     request: PreVoteRequest,
-    ctx: Arc<PaxosSharedContext>,
+    ctx: &PaxosSharedContext,
 ) -> PreVoteResponse {
     let current_term = ctx.get_current_term();
     let current_member_id = ctx.get_current_member_id();
