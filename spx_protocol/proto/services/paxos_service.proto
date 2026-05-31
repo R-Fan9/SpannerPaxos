@@ -4,7 +4,6 @@ package spx.services;
 
 import "messages/accept.proto";
 import "messages/save_write.proto";
-import "messages/replicate_write.proto";
 import "messages/commit_write.proto";
 import "messages/pre_vote.proto";
 import "messages/vote.proto";
@@ -12,9 +11,6 @@ import "messages/vote.proto";
 service Paxos {
     // Sent by an external client (or forwarded by follower) to leader to save a log entry
     rpc SaveWrite (messages.SaveWriteRequest) returns (messages.SaveWriteResponse);
-
-    // Sent by leader to follower(s) to replicate the persistence of a log entry
-    rpc ReplicateWrite (messages.ReplicateWriteRequest) returns (messages.ReplicateWriteResponse);
 
     // Sent by leader to commit a log entry when a quorum of members has persisted the log
     rpc CommitWrite (messages.CommitWriteRequest) returns (messages.CommitWriteResponse);

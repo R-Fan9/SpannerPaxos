@@ -48,13 +48,6 @@ impl Paxos for GrpcPaxosService {
         todo!()
     }
 
-    async fn replicate_write(
-        &self,
-        request: Request<spx_protocol::ReplicateWriteRequest>,
-    ) -> Result<Response<spx_protocol::ReplicateWriteResponse>, Status> {
-        todo!()
-    }
-
     async fn commit_write(
         &self,
         request: Request<spx_protocol::CommitWriteRequest>,

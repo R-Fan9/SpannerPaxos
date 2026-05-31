@@ -3,7 +3,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .compile_protos(
             &[
                 "proto/messages/save_write.proto",
-                "proto/messages/replicate_write.proto",
                 "proto/messages/commit_write.proto",
                 "proto/messages/pre_vote.proto",
                 "proto/messages/vote.proto",
