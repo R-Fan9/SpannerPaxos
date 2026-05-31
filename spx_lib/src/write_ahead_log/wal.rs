@@ -16,12 +16,14 @@ impl WriteAheadLog {
         self.entries.insert(slot, (term, value));
     }
 
-    /// Returns the term stored at `slot`. Panics if the slot has no entry.
-    pub fn get_term(&self, slot: u32) -> u32 {
-        self.entries
-            .get(&slot)
-            .map(|(term, _)| *term)
-            .expect("no WAL entry found for slot")
+    /// Returns true if the WAL contains an entry at `slot`.
+    pub fn has_entry(&self, slot: u32) -> bool {
+        self.entries.contains_key(&slot)
+    }
+
+    /// Returns the term stored at `slot`, or `None` if no entry exists for that slot.
+    pub fn get_term(&self, slot: u32) -> Option<u32> {
+        self.entries.get(&slot).map(|(term, _)| *term)
     }
 
     /// Returns all entries with slot >= `from_slot`, in ascending slot order.
@@ -37,16 +39,23 @@ impl WriteAheadLog {
         self.entries.split_off(&starting_slot);
     }
 
-    /// Returns the lowest slot logged at exactly `term`.
+    /// Returns the highest slot logged at exactly `term`, or `None` if no entry exists for that term.
+    pub fn find_highest_slot_for_term(&self, term: u32) -> Option<u32> {
+        self.entries
+            .iter()
+            .filter(|(_, (t, _))| *t == term)
+            .map(|(slot, _)| *slot)
+            .max()
+    }
+
+    /// Returns the lowest slot logged at exactly `term`, or `None` if no entry exists for that term.
     /// Used by followers to report the first slot where log divergence could begin at a given term.
-    /// Panics if no entry exists for the given term.
-    pub fn find_lowest_slot_for_term(&self, term: u32) -> u32 {
+    pub fn find_lowest_slot_for_term(&self, term: u32) -> Option<u32> {
         self.entries
             .iter()
             .filter(|(_, (t, _))| *t == term)
             .map(|(slot, _)| *slot)
             .min()
-            .expect("no WAL entry found for the given term")
     }
 
     /// Returns `(term, slot)` of the highest slot logged at `term`. If no entry exists for

@@ -4,53 +4,56 @@ package spx.messages;
 
 message AcceptRequest {
     // The leader's current term
-    uint64 term = 1;
+    uint32 term = 1;
 
     // The leader's unique identifier
     string leader_id = 2;
 
     // The slot of the log entry immediately preceding the entries array
-    uint64 prev_log_slot = 3;
+    uint32 prev_log_slot = 3;
 
     // The term of the preceding log entry — follower rejects if this mismatches its own disk
-    uint64 prev_log_term = 4;
+    uint32 prev_log_term = 4;
 
     // The log entries being replicated (empty for heartbeat/lease renewal)
     repeated AcceptLogEntry entries = 5;
 
     // The highest slot the leader knows has reached a global quorum
-    uint64 leader_commit_slot = 6;
+    uint32 leader_commit_slot = 6;
 }
 
 message AcceptResponse {
+    // The unique identifier of the member sending this response
+    string member_id = 1;
+
     // The follower's current term — leader steps down if this exceeds its own term
-    uint64 term = 1;
+    uint32 term = 2;
 
     // True if the anchor matched and entries were written; false if rejected
-    bool success = 2;
+    bool success = 3;
 
     // The highest slot the follower successfully wrote to disk (populated when success == true)
-    uint64 last_written_slot = 3;
+    uint32 last_written_slot = 4;
 
     // Diagnostic hint for fast backtrack (populated when success == false)
-    optional ConflictHint conflict_hint = 4;
+    optional ConflictHint conflict_hint = 5;
 }
 
 message ConflictHint {
     // The term of the conflicting entry sitting at the requested anchor slot
-    uint64 conflict_term = 1;
+    uint32 conflict_term = 1;
 
     // The first slot on the follower's disk where this conflicting term began
-    uint64 conflict_first_slot = 2;
+    uint32 conflict_first_slot = 2;
 }
 
 message AcceptLogEntry {
     // The term when this log was originally created
-    uint64 term = 1;
+    uint32 term = 1;
 
     // The global slot position of this log in the history
-    uint64 slot = 2;
+    uint32 slot = 2;
 
-    // The actual database command (serialized bytes)
-    bytes command = 3;
+    // The value stored at this log slot
+    string entry = 3;
 }

@@ -49,8 +49,8 @@ impl PaxosEvent {
             PaxosEvent::PreVoteResponseReceived(r) => Some(r.term),
             PaxosEvent::VoteRequestReceived(cmd) => Some(cmd.get_request().term),
             PaxosEvent::VoteResponseReceived(r) => Some(r.term),
-            PaxosEvent::AcceptRequestReceived(cmd) => Some(cmd.get_request().term as u32),
-            PaxosEvent::AcceptResponseReceived(r) => Some(r.term as u32),
+            PaxosEvent::AcceptRequestReceived(cmd) => Some(cmd.get_request().term),
+            PaxosEvent::AcceptResponseReceived(r) => Some(r.term),
         }
     }
 }

@@ -199,6 +199,11 @@ impl PaxosSharedContext {
         self.lease.notify.notify_one();
     }
 
+    pub async fn extend_leader_lease_expiry_time(&self) {
+        self.update_leader_lease_expiry_time(TrueTime::now().latest + self.lease_length)
+            .await;
+    }
+
     pub async fn is_leader_lease_expired(&self) -> bool {
         let Some(expiry) = *self.lease.expiry.read().await else {
             return true;

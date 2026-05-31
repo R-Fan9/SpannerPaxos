@@ -5,7 +5,7 @@ pub fn accept_log_entry_to_proto(e: AcceptLogEntry) -> spx_protocol::AcceptLogEn
     spx_protocol::AcceptLogEntry {
         term: e.term,
         slot: e.slot,
-        command: e.command,
+        entry: e.entry,
     }
 }
 
@@ -13,7 +13,7 @@ pub fn accept_log_entry_from_proto(e: spx_protocol::AcceptLogEntry) -> AcceptLog
     AcceptLogEntry {
         term: e.term,
         slot: e.slot,
-        command: e.command,
+        entry: e.entry,
     }
 }
 
@@ -41,6 +41,7 @@ pub fn accept_request_from_proto(r: spx_protocol::AcceptRequest) -> AcceptReques
 
 pub fn accept_response_to_proto(r: AcceptResponse) -> spx_protocol::AcceptResponse {
     spx_protocol::AcceptResponse {
+        member_id: r.member_id.to_string(),
         term: r.term,
         success: r.success,
         last_written_slot: r.last_written_slot,
@@ -53,6 +54,7 @@ pub fn accept_response_to_proto(r: AcceptResponse) -> spx_protocol::AcceptRespon
 
 pub fn accept_response_from_proto(r: spx_protocol::AcceptResponse) -> AcceptResponse {
     AcceptResponse {
+        member_id: Uuid::parse_str(&r.member_id).unwrap(),
         term: r.term,
         success: r.success,
         last_written_slot: r.last_written_slot,

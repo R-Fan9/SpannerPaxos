@@ -1,11 +1,11 @@
 use crate::roles::{PaxosRole, PreCandidate};
 use crate::state_machine::PaxosState;
 use crate::{
-    PaxosEvent, PaxosSharedContext, PreVoteRequest, PreVoteResponse, VoteOutcome, VotePromise,
-    VoteRejection, VoteRequest, VoteResponse,
+    AcceptRequest, AcceptResponse, ConflictHint, LogEntry, PaxosEvent, PaxosSharedContext,
+    PreVoteRequest, PreVoteResponse, VoteOutcome, VotePromise, VoteRejection, VoteRequest,
+    VoteResponse,
 };
 use spx_lib::count_down_clock::CountDownClock;
-use spx_lib::true_time::TrueTime;
 use std::error::Error;
 use tonic::async_trait;
 use uuid::Uuid;
@@ -203,8 +203,7 @@ impl Follower {
         });
 
         // Treat the vote as a leader lease: block new elections and votes until the lease expires
-        ctx.update_leader_lease_expiry_time(TrueTime::now().latest + ctx.get_lease_length())
-            .await;
+        ctx.extend_leader_lease_expiry_time().await;
 
         VoteResponse {
             member_id: current_member_id,
@@ -258,6 +257,124 @@ impl Follower {
         let mut pre_candidate = PreCandidate::new(ctx);
         pre_candidate.dispatch_pre_vote(ctx).await?;
         Ok(Some(pre_candidate))
+    }
+
+    async fn handle_accept_request(
+        &mut self,
+        request: AcceptRequest,
+        ctx: &mut PaxosSharedContext,
+    ) -> AcceptResponse {
+        let current_term = ctx.get_current_term();
+        let current_member_id = ctx.get_current_member_id();
+
+        // Ignore stale requests from leaders in an older term
+        if request.term < current_term {
+            println!(
+                "{} Info: Ignoring accept request from {} with stale term {} (current: {})",
+                ctx.log_prefix("Follower"),
+                request.leader_id,
+                request.term,
+                current_term
+            );
+            return AcceptResponse {
+                member_id: current_member_id,
+                term: current_term,
+                success: false,
+                last_written_slot: 0,
+                conflict_hint: None,
+            };
+        }
+
+        // Track the current leader from every accept request
+        self.update_current_leader_id(request.leader_id);
+
+        let prev_log_slot = request.prev_log_slot;
+
+        let response = if prev_log_slot > 0 && !ctx.get_wal().has_entry(prev_log_slot) {
+            // Short log — follower doesn't have the anchor slot
+            AcceptResponse {
+                member_id: current_member_id,
+                term: current_term,
+                success: false,
+                last_written_slot: 0,
+                conflict_hint: Some(ConflictHint {
+                    // conflict_term 0 signals the leader that the follower's log is simply too short
+                    conflict_term: 0,
+                    // point the leader to the first slot the follower is missing
+                    conflict_first_slot: ctx.get_last_log_slot() + 1,
+                }),
+            }
+        } else if prev_log_slot > 0
+            && ctx
+                .get_wal()
+                .get_term(prev_log_slot)
+                .expect("entry confirmed present by has_entry")
+                != request.prev_log_term
+        {
+            // Term mismatch at the anchor slot
+            let local_term = ctx
+                .get_wal()
+                .get_term(prev_log_slot)
+                .expect("entry confirmed present by has_entry");
+            let conflict_first_slot = ctx
+                .get_wal()
+                .find_lowest_slot_for_term(local_term)
+                .expect("term just read from WAL must exist");
+            AcceptResponse {
+                member_id: current_member_id,
+                term: current_term,
+                success: false,
+                last_written_slot: 0,
+                conflict_hint: Some(ConflictHint {
+                    conflict_term: local_term,
+                    // first slot of the conflicting term so the leader can skip the whole term
+                    conflict_first_slot,
+                }),
+            }
+        } else {
+            // Anchor matches — truncate conflicts and append new entries
+            ctx.get_wal_mut().truncate_from(prev_log_slot + 1);
+            let mut last_written_slot = prev_log_slot;
+            for log_entry in &request.entries {
+                ctx.get_wal_mut()
+                    .append(log_entry.slot, log_entry.term, log_entry.entry.clone());
+
+                ctx.get_uncommitted_logs_mut().insert(log_entry.slot, LogEntry {
+                    term: log_entry.term,
+                    slot: log_entry.slot,
+                    entry: log_entry.entry.clone(),
+                });
+
+                last_written_slot = log_entry.slot;
+            }
+
+            // Advance the local log position to what was just written
+            if let Some(last) = request.entries.last() {
+                ctx.set_last_log_slot(last.slot);
+                ctx.set_last_log_term(last.term);
+            }
+
+            // Advance committed slot and evict entries that are now committed
+            let new_committed_slot = request.leader_commit_slot.min(last_written_slot);
+            if new_committed_slot > ctx.get_committed_slot() {
+                ctx.set_committed_slot(new_committed_slot);
+                ctx.get_uncommitted_logs_mut()
+                    .retain(|&slot, _| slot > new_committed_slot);
+            }
+
+            AcceptResponse {
+                member_id: current_member_id,
+                term: current_term,
+                success: true,
+                last_written_slot,
+                conflict_hint: None,
+            }
+        };
+
+        // Extend the leader lease on every valid accept request, regardless of outcome
+        ctx.extend_leader_lease_expiry_time().await;
+
+        response
     }
 
     async fn handle_vote_response(&mut self, response: VoteResponse, ctx: &PaxosSharedContext) {
@@ -332,12 +449,27 @@ impl PaxosRole for Follower {
                 self.handle_vote_response(response, ctx).await;
                 Ok(PaxosState::Follower(self))
             }
-            PaxosEvent::AcceptRequestReceived(_command) => {
-                // TODO: handle accept (AppendEntries) request from the leader
-                todo!()
+            PaxosEvent::AcceptRequestReceived(command) => {
+                let request = command.get_request();
+                let response = self.handle_accept_request(request, ctx).await;
+                command.send(response)?;
+                Ok(PaxosState::Follower(self))
             }
-            PaxosEvent::AcceptResponseReceived(_response) => {
-                // Accept responses are handled by the leader, not follower
+            PaxosEvent::AcceptResponseReceived(response) => {
+                println!(
+                    "{} Info: Ignoring accept response from {} — success: {}, term: {}, last_written_slot: {}{}",
+                    ctx.log_prefix("Follower"),
+                    response.member_id,
+                    response.success,
+                    response.term,
+                    response.last_written_slot,
+                    response.conflict_hint.as_ref().map_or(String::new(), |h| {
+                        format!(
+                            ", conflict_term: {}, conflict_first_slot: {}",
+                            h.conflict_term, h.conflict_first_slot
+                        )
+                    })
+                );
                 Ok(PaxosState::Follower(self))
             }
         }
