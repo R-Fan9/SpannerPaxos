@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -19,6 +20,9 @@ pub struct AcceptRequest {
 
     // The highest slot the leader knows has reached a global quorum
     pub leader_commit_slot: u32,
+
+    // The TrueTime earliest bound at which the leader sent this request
+    pub t_send: DateTime<Utc>,
 }
 
 #[derive(Clone)]
@@ -37,6 +41,9 @@ pub struct AcceptResponse {
 
     // Diagnostic hint for fast backtrack (populated when success == false)
     pub conflict_hint: Option<ConflictHint>,
+
+    // The t_send value from the originating AcceptRequest, echoed back for leader lease tracking
+    pub echoed_t_send: DateTime<Utc>,
 }
 
 #[derive(Clone)]

@@ -2,7 +2,9 @@ use crate::models::LogPosition;
 use crate::roles::PaxosRole;
 use crate::state_machine::PaxosState;
 use crate::{AcceptLogEntry, AcceptRequest, AcceptResponse, PaxosEvent, PaxosSharedContext};
+use chrono::{DateTime, Utc};
 use futures::future::try_join_all;
+use spx_lib::true_time::TrueTime;
 use std::collections::HashMap;
 use std::error::Error;
 use tonic::async_trait;
@@ -12,11 +14,19 @@ use uuid::Uuid;
 pub struct Leader {
     // A map of Paxos group member IDs to their local WAL positions
     score_board: HashMap<Uuid, LogPosition>,
+
+    // Tracks the most recent echoed t_send per follower; used for quorum lease renewal
+    last_contact: HashMap<Uuid, DateTime<Utc>>,
 }
 
 impl Leader {
     pub fn new(score_board: HashMap<Uuid, LogPosition>) -> Self {
-        Self { score_board }
+        let last_contact = score_board
+            .keys()
+            .copied()
+            .map(|id| (id, DateTime::<Utc>::UNIX_EPOCH))
+            .collect();
+        Self { score_board, last_contact }
     }
 
     pub async fn process_uncommitted_logs(
@@ -110,6 +120,7 @@ impl Leader {
             prev_log_term,
             entries,
             leader_commit_slot: ctx.get_committed_slot(),
+            t_send: TrueTime::now().earliest,
         };
 
         ctx.get_dispatcher()
@@ -134,6 +145,24 @@ impl Leader {
                 current_term
             );
             return Ok(());
+        }
+
+        // Update last_contact to the max of the stored and echoed t_send values
+        self.last_contact
+            .entry(member_id)
+            .and_modify(|t| *t = (*t).max(response.echoed_t_send))
+            .or_insert(response.echoed_t_send);
+
+        // After each response, check if a quorum of followers has been in recent contact.
+        // Sort follower contact times newest-first; the value at index quorum_size-1 is the
+        // "weakest link" — if it plus lease_length exceeds the current expiry, extend the lease.
+        let quorum_size = (self.score_board.len() + 1) / 2 + 1;
+        let mut contact_times: Vec<DateTime<Utc>> =
+            self.last_contact.values().copied().collect();
+        contact_times.sort_unstable_by(|a, b| b.cmp(a));
+        if let Some(&t_quorum) = contact_times.get(quorum_size - 1) {
+            let proposed_expiry = t_quorum + ctx.get_lease_length();
+            ctx.try_extend_leader_lease_to(proposed_expiry).await;
         }
 
         if response.success {
@@ -198,17 +227,6 @@ impl Leader {
         }
 
         self.dispatch_accept_request_to_member(member_id, ctx).await
-    }
-
-    fn has_quorum(&self, slot: u32) -> bool {
-        let num_matched = self
-            .score_board
-            .values()
-            .filter(|pos| pos.match_slot >= slot)
-            .count();
-
-        // + 1 accounts for the leader's implicit self-match, which is not in the score board
-        (num_matched + 1) >= (self.score_board.len() + 1) / 2 + 1
     }
 }
 

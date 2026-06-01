@@ -20,6 +20,9 @@ message AcceptRequest {
 
     // The highest slot the leader knows has reached a global quorum
     uint32 leader_commit_slot = 6;
+
+    // The TrueTime earliest bound at which the leader sent this request (unix milliseconds)
+    int64 t_send = 7;
 }
 
 message AcceptResponse {
@@ -37,6 +40,9 @@ message AcceptResponse {
 
     // Diagnostic hint for fast backtrack (populated when success == false)
     optional ConflictHint conflict_hint = 5;
+
+    // The t_send value from the originating AcceptRequest, echoed back for leader lease tracking (unix milliseconds)
+    int64 echoed_t_send = 6;
 }
 
 message ConflictHint {

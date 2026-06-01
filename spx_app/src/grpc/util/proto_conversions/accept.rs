@@ -1,5 +1,10 @@
+use chrono::{DateTime, Utc};
 use spx_core::{AcceptLogEntry, AcceptRequest, AcceptResponse, ConflictHint};
 use uuid::Uuid;
+
+fn millis_to_datetime(ms: i64) -> DateTime<Utc> {
+    DateTime::from_timestamp_millis(ms).expect("valid timestamp from proto")
+}
 
 pub fn accept_log_entry_to_proto(e: AcceptLogEntry) -> spx_protocol::AcceptLogEntry {
     spx_protocol::AcceptLogEntry {
@@ -25,6 +30,7 @@ pub fn accept_request_to_proto(r: AcceptRequest) -> spx_protocol::AcceptRequest 
         prev_log_term: r.prev_log_term,
         entries: r.entries.into_iter().map(accept_log_entry_to_proto).collect(),
         leader_commit_slot: r.leader_commit_slot,
+        t_send: r.t_send.timestamp_millis(),
     }
 }
 
@@ -36,6 +42,7 @@ pub fn accept_request_from_proto(r: spx_protocol::AcceptRequest) -> AcceptReques
         prev_log_term: r.prev_log_term,
         entries: r.entries.into_iter().map(accept_log_entry_from_proto).collect(),
         leader_commit_slot: r.leader_commit_slot,
+        t_send: millis_to_datetime(r.t_send),
     }
 }
 
@@ -49,6 +56,7 @@ pub fn accept_response_to_proto(r: AcceptResponse) -> spx_protocol::AcceptRespon
             conflict_term: h.conflict_term,
             conflict_first_slot: h.conflict_first_slot,
         }),
+        echoed_t_send: r.echoed_t_send.timestamp_millis(),
     }
 }
 
@@ -62,5 +70,6 @@ pub fn accept_response_from_proto(r: spx_protocol::AcceptResponse) -> AcceptResp
             conflict_term: h.conflict_term,
             conflict_first_slot: h.conflict_first_slot,
         }),
+        echoed_t_send: millis_to_datetime(r.echoed_t_send),
     }
 }

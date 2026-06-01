@@ -266,6 +266,7 @@ impl Follower {
     ) -> AcceptResponse {
         let current_term = ctx.get_current_term();
         let current_member_id = ctx.get_current_member_id();
+        let t_send = request.t_send;
 
         // Ignore stale requests from leaders in an older term
         if request.term < current_term {
@@ -282,6 +283,7 @@ impl Follower {
                 success: false,
                 last_written_slot: 0,
                 conflict_hint: None,
+                echoed_t_send: t_send,
             };
         }
 
@@ -303,6 +305,7 @@ impl Follower {
                     // point the leader to the first slot the follower is missing
                     conflict_first_slot: ctx.get_last_log_slot() + 1,
                 }),
+                echoed_t_send: t_send,
             }
         } else if prev_log_slot > 0
             && ctx
@@ -330,6 +333,7 @@ impl Follower {
                     // first slot of the conflicting term so the leader can skip the whole term
                     conflict_first_slot,
                 }),
+                echoed_t_send: t_send,
             }
         } else {
             // Anchor matches — truncate conflicts and append new entries
@@ -368,6 +372,7 @@ impl Follower {
                 success: true,
                 last_written_slot,
                 conflict_hint: None,
+                echoed_t_send: t_send,
             }
         };
 

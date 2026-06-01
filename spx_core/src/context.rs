@@ -204,6 +204,14 @@ impl PaxosSharedContext {
             .await;
     }
 
+    pub async fn try_extend_leader_lease_to(&self, proposed: DateTime<Utc>) {
+        let mut expiry = self.lease.expiry.write().await;
+        if expiry.map_or(true, |current| proposed > current) {
+            *expiry = Some(proposed);
+            self.lease.notify.notify_one();
+        }
+    }
+
     pub async fn is_leader_lease_expired(&self) -> bool {
         let Some(expiry) = *self.lease.expiry.read().await else {
             return true;
