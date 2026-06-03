@@ -1,8 +1,8 @@
 use crate::roles::{Candidate, Follower, PaxosRole, util};
 use crate::state_machine::PaxosState;
 use crate::{
-    PaxosEvent, PaxosSharedContext, PreVoteResponse, VoteOutcome, VotePromise, VoteRejection,
-    VoteRequest, VoteResponse,
+    ClientWriteResponse, PaxosEvent, PaxosSharedContext, PreVoteResponse, VoteOutcome,
+    VotePromise, VoteRejection, VoteRequest, VoteResponse,
 };
 use spx_lib::count_down_clock::CountDownClock;
 use std::collections::HashMap;
@@ -278,6 +278,13 @@ impl PaxosRole for PreCandidate {
             }
             PaxosEvent::AcceptRequestReceived(_) | PaxosEvent::AcceptResponseReceived(_) => {
                 // Pre-candidate is in the middle of a pre-vote campaign, ignore accept messages
+                Ok(PaxosState::PreCandidate(self))
+            }
+            PaxosEvent::ClientWriteRequestReceived(command) => {
+                let _ = command.send(ClientWriteResponse {
+                    success: false,
+                    error: Some("not the leader".to_string()),
+                });
                 Ok(PaxosState::PreCandidate(self))
             }
         }

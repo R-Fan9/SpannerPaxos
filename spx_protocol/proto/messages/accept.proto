@@ -3,63 +3,63 @@ syntax = "proto3";
 package spx.messages;
 
 message AcceptRequest {
-    // The leader's current term
-    uint32 term = 1;
+  // The leader's current term
+  uint32 term = 1;
 
-    // The leader's unique identifier
-    string leader_id = 2;
+  // The leader's unique identifier
+  string leader_id = 2;
 
-    // The slot of the log entry immediately preceding the entries array
-    uint32 prev_log_slot = 3;
+  // The slot of the log entry immediately preceding the entries array
+  uint32 prev_log_slot = 3;
 
-    // The term of the preceding log entry — follower rejects if this mismatches its own disk
-    uint32 prev_log_term = 4;
+  // The term of the preceding log entry — follower rejects if this mismatches its own disk
+  uint32 prev_log_term = 4;
 
-    // The log entries being replicated (empty for heartbeat/lease renewal)
-    repeated AcceptLogEntry entries = 5;
+  // The log entries being replicated (empty for heartbeat/lease renewal)
+  repeated AcceptLogEntry entries = 5;
 
-    // The highest slot the leader knows has reached a global quorum
-    uint32 leader_commit_slot = 6;
+  // The highest slot the leader knows has reached a global quorum
+  uint32 leader_commit_slot = 6;
 
-    // The TrueTime earliest bound at which the leader sent this request (unix milliseconds)
-    int64 t_send = 7;
+  // The TrueTime earliest bound at which the leader sent this request (unix milliseconds)
+  int64 t_send = 7;
 }
 
 message AcceptResponse {
-    // The unique identifier of the member sending this response
-    string member_id = 1;
+  // The unique identifier of the member sending this response
+  string member_id = 1;
 
-    // The follower's current term — leader steps down if this exceeds its own term
-    uint32 term = 2;
+  // The follower's current term — leader steps down if this exceeds its own term
+  uint32 term = 2;
 
-    // True if the anchor matched and entries were written; false if rejected
-    bool success = 3;
+  // True if the anchor matched and entries were written; false if rejected
+  bool success = 3;
 
-    // The highest slot the follower successfully wrote to disk (populated when success == true)
-    uint32 last_written_slot = 4;
+  // The highest slot the follower successfully wrote to disk (populated when success == true)
+  uint32 last_written_slot = 4;
 
-    // Diagnostic hint for fast backtrack (populated when success == false)
-    optional ConflictHint conflict_hint = 5;
+  // Diagnostic hint for fast backtrack (populated when success == false)
+  optional ConflictHint conflict_hint = 5;
 
-    // The t_send value from the originating AcceptRequest, echoed back for leader lease tracking (unix milliseconds)
-    int64 echoed_t_send = 6;
+  // The t_send value from the originating AcceptRequest, echoed back for leader lease tracking (unix milliseconds)
+  int64 echoed_t_send = 6;
 }
 
 message ConflictHint {
-    // The term of the conflicting entry sitting at the requested anchor slot
-    uint32 conflict_term = 1;
+  // The term of the conflicting entry sitting at the requested anchor slot
+  uint32 conflict_term = 1;
 
-    // The first slot on the follower's disk where this conflicting term began
-    uint32 conflict_first_slot = 2;
+  // The first slot on the follower's disk where this conflicting term began
+  uint32 conflict_first_slot = 2;
 }
 
 message AcceptLogEntry {
-    // The term when this log was originally created
-    uint32 term = 1;
+  // The term when this log was originally created
+  uint32 term = 1;
 
-    // The global slot position of this log in the history
-    uint32 slot = 2;
+  // The global slot position of this log in the history
+  uint32 slot = 2;
 
-    // The value stored at this log slot
-    string entry = 3;
+  // The value stored at this log slot
+  string entry = 3;
 }

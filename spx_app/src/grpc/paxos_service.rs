@@ -41,18 +41,15 @@ impl GrpcPaxosService {
 
 #[async_trait]
 impl Paxos for GrpcPaxosService {
-    async fn save_write(
+    async fn client_write(
         &self,
-        request: Request<spx_protocol::SaveWriteRequest>,
-    ) -> Result<Response<spx_protocol::SaveWriteResponse>, Status> {
-        todo!()
-    }
-
-    async fn commit_write(
-        &self,
-        request: Request<spx_protocol::CommitWriteRequest>,
-    ) -> Result<Response<spx_protocol::CommitWriteResponse>, Status> {
-        todo!()
+        request: Request<spx_protocol::ClientWriteRequest>,
+    ) -> Result<Response<spx_protocol::ClientWriteResponse>, Status> {
+        let request = util::client_write_request_from_proto(request.into_inner());
+        let response = self
+            .dispatch(request, PaxosEvent::ClientWriteRequestReceived)
+            .await?;
+        Ok(Response::new(util::client_write_response_to_proto(response)))
     }
 
     async fn pre_vote(

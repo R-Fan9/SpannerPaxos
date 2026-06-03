@@ -158,6 +158,10 @@ impl PaxosSharedContext {
         &self.peer_ids
     }
 
+    pub fn get_quorum_size(&self) -> usize {
+        (self.peer_ids.len() + 1) / 2 + 1
+    }
+
     pub fn get_last_log_term(&self) -> u32 {
         self.last_log_term
     }
@@ -204,12 +208,8 @@ impl PaxosSharedContext {
             .await;
     }
 
-    pub async fn try_extend_leader_lease_to(&self, proposed: DateTime<Utc>) {
-        let mut expiry = self.lease.expiry.write().await;
-        if expiry.map_or(true, |current| proposed > current) {
-            *expiry = Some(proposed);
-            self.lease.notify.notify_one();
-        }
+    pub async fn get_leader_lease_expiry(&self) -> Option<DateTime<Utc>> {
+        *self.lease.expiry.read().await
     }
 
     pub async fn is_leader_lease_expired(&self) -> bool {

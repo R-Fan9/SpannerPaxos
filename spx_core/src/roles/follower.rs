@@ -1,9 +1,9 @@
 use crate::roles::{PaxosRole, PreCandidate};
 use crate::state_machine::PaxosState;
 use crate::{
-    AcceptRequest, AcceptResponse, ConflictHint, LogEntry, PaxosEvent, PaxosSharedContext,
-    PreVoteRequest, PreVoteResponse, VoteOutcome, VotePromise, VoteRejection, VoteRequest,
-    VoteResponse,
+    AcceptRequest, AcceptResponse, ClientWriteResponse, ConflictHint, LogEntry, PaxosEvent,
+    PaxosSharedContext, PreVoteRequest, PreVoteResponse, VoteOutcome, VotePromise, VoteRejection,
+    VoteRequest, VoteResponse,
 };
 use spx_lib::count_down_clock::CountDownClock;
 use std::error::Error;
@@ -475,6 +475,13 @@ impl PaxosRole for Follower {
                         )
                     })
                 );
+                Ok(PaxosState::Follower(self))
+            }
+            PaxosEvent::ClientWriteRequestReceived(command) => {
+                let _ = command.send(ClientWriteResponse {
+                    success: false,
+                    error: Some("not the leader".to_string()),
+                });
                 Ok(PaxosState::Follower(self))
             }
         }

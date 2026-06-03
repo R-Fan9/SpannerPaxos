@@ -3,66 +3,66 @@ syntax = "proto3";
 package spx.messages;
 
 message RequestVoteRequest {
-    // The ID of the pre-candidate who sent the pre-vote message
-    string member_id = 1;
+  // The ID of the pre-candidate who sent the pre-vote message
+  string member_id = 1;
 
-    // The next term (ballot) number the pre-candidate proposing to start
-    uint32 term = 2;
+  // The next term (ballot) number the pre-candidate proposing to start
+  uint32 term = 2;
 
-    // The term number of the last log entry persisted by the candidate
-    uint32 last_log_term = 4;
+  // The term number of the last log entry persisted by the candidate
+  uint32 last_log_term = 4;
 
-    // The slot number of the last log entry persisted by the candidate
-    uint32 last_log_slot = 3;
+  // The slot number of the last log entry persisted by the candidate
+  uint32 last_log_slot = 3;
 }
 
 message RequestVoteResponse {
-    uint32 term = 1;
+  uint32 term = 1;
 
-    // The ID of the member who responded to the vote request
-    string member_id = 2;
+  // The ID of the member who responded to the vote request
+  string member_id = 2;
 
-    // The outcome determines the payload
-    oneof outcome {
-        Promise promise = 3;
-        Rejection rejection = 4;
-    }
+  // The outcome determines the payload
+  oneof outcome {
+    Promise promise = 3;
+    Rejection rejection = 4;
+  }
 }
 
 message Promise {
-    // The term number of the last log entry the member persisted, needed for score board construction
-    uint32 last_log_term = 1;
+  // The term number of the last log entry the member persisted, needed for score board construction
+  uint32 last_log_term = 1;
 
-    // The slot number of the last log entry the member persisted, needed for score board construction
-    uint32 last_log_slot = 2;
+  // The slot number of the last log entry the member persisted, needed for score board construction
+  uint32 last_log_slot = 2;
 
-    // Any log entries the follower has not committed, the newly elected leader must process these entries first
-    repeated LogEntry uncommitted_entries = 3;
+  // Any log entries the follower has not committed, the newly elected leader must process these entries first
+  repeated LogEntry uncommitted_entries = 3;
 }
 
 message Rejection {
-    // Tells the Candidate to abort the election because this leader's TrueTime lease is still active.
-    optional string current_leader_id = 1;
+  // Tells the Candidate to abort the election because this leader's TrueTime lease is still active.
+  optional string current_leader_id = 1;
 
-    // Provides a catch-up hint telling the Candidate that it could be saving logs with the wrong term,
-    // and would need to delete its stale uncommitted entries
-    optional uint32 member_last_log_term = 2;
+  // Provides a catch-up hint telling the Candidate that it could be saving logs with the wrong term,
+  // and would need to delete its stale uncommitted entries
+  optional uint32 member_last_log_term = 2;
 
-    // Provides a catch-up hint telling the Candidate how far behind its logs are compared to this Follower.
-    optional uint32 member_last_log_slot = 3;
+  // Provides a catch-up hint telling the Candidate how far behind its logs are compared to this Follower.
+  optional uint32 member_last_log_slot = 3;
 
-    // Informs the Candidate that it lost the race because this Follower already voted for someone else this term.
-    optional string voted_for_id = 4;
+  // Informs the Candidate that it lost the race because this Follower already voted for someone else this term.
+  optional string voted_for_id = 4;
 }
 
 message LogEntry {
-    // The term number when the leader originally proposed this write
-    uint32 term = 1;
+  // The term number when the leader originally proposed this write
+  uint32 term = 1;
 
-    // The slot number of this entry in the append-only log
-    uint32 slot = 2;
+  // The slot number of this entry in the append-only log
+  uint32 slot = 2;
 
-    // The actual database command/mutation (usually serialized bytes)
-    string entry = 3;
+  // The actual database command/mutation (usually serialized bytes)
+  string entry = 3;
 }
 

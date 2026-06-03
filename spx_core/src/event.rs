@@ -1,4 +1,4 @@
-use crate::{AcceptRequest, AcceptResponse, PaxosCommand, PreVoteRequest, PreVoteResponse, VoteRequest, VoteResponse};
+use crate::{AcceptRequest, AcceptResponse, ClientWriteRequest, ClientWriteResponse, PaxosCommand, PreVoteRequest, PreVoteResponse, VoteRequest, VoteResponse};
 use std::fmt;
 
 pub enum PaxosEvent {
@@ -31,6 +31,9 @@ pub enum PaxosEvent {
 
     // This leader has received an accept response from a follower
     AcceptResponseReceived(AcceptResponse),
+
+    // This leader has received a write request from a client
+    ClientWriteRequestReceived(PaxosCommand<ClientWriteRequest, ClientWriteResponse>),
 }
 
 impl PaxosEvent {
@@ -51,6 +54,8 @@ impl PaxosEvent {
             PaxosEvent::VoteResponseReceived(r) => Some(r.term),
             PaxosEvent::AcceptRequestReceived(cmd) => Some(cmd.get_request().term),
             PaxosEvent::AcceptResponseReceived(r) => Some(r.term),
+            // Client writes carry no Paxos term
+            PaxosEvent::ClientWriteRequestReceived(_) => None,
         }
     }
 }

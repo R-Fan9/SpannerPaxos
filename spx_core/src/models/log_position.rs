@@ -5,6 +5,10 @@ pub struct LogPosition {
 
     // The slot of the next log entry to be persisted to the member's local WAL
     pub next_slot: u32,
+
+    // The last slot included in the most recently dispatched log entries batch to this member;
+    // this is used to minimize duplicate entries to be sent
+    pub sent_slot: u32,
 }
 
 impl LogPosition {
@@ -12,6 +16,7 @@ impl LogPosition {
         Self {
             match_slot: 0,
             next_slot: 0,
+            sent_slot: 0,
         }
     }
 
@@ -19,6 +24,7 @@ impl LogPosition {
         Self {
             match_slot: 0,
             next_slot,
+            sent_slot: 0,
         }
     }
 }

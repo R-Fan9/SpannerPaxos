@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package spx.messages;
+
+message ClientWriteRequest {
+  string value = 1;
+}
+
+message ClientWriteResponse {
+  bool success = 1;
+  string error = 2;
+}

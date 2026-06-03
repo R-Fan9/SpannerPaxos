@@ -3,24 +3,20 @@ syntax = "proto3";
 package spx.services;
 
 import "messages/accept.proto";
-import "messages/save_write.proto";
-import "messages/commit_write.proto";
+import "messages/client_write.proto";
 import "messages/pre_vote.proto";
 import "messages/vote.proto";
 
 service Paxos {
-    // Sent by an external client (or forwarded by follower) to leader to save a log entry
-    rpc SaveWrite (messages.SaveWriteRequest) returns (messages.SaveWriteResponse);
+  // Sent by an external client to submit a write to the leader
+  rpc ClientWrite (messages.ClientWriteRequest) returns (messages.ClientWriteResponse);
 
-    // Sent by leader to commit a log entry when a quorum of members has persisted the log
-    rpc CommitWrite (messages.CommitWriteRequest) returns (messages.CommitWriteResponse);
+  // Sent by leader pre-candidate to grant votes from members to become a leader candidate
+  rpc PreVote (messages.PreVoteRequest) returns (messages.PreVoteResponse);
 
-    // Sent by leader pre-candidate to grant votes from members to become a leader candidate
-    rpc PreVote (messages.PreVoteRequest) returns (messages.PreVoteResponse);
+  // Sent by leader candidate to grant votes from members to become a leader
+  rpc RequestVote (messages.RequestVoteRequest) returns (messages.RequestVoteResponse);
 
-    // Sent by leader candidate to grant votes from members to become a leader
-    rpc RequestVote (messages.RequestVoteRequest) returns (messages.RequestVoteResponse);
-
-    // Sent by leader to replicate log entries and advance the commit index on followers
-    rpc Accept (messages.AcceptRequest) returns (messages.AcceptResponse);
+  // Sent by leader to replicate log entries and advance the commit index on followers
+  rpc Accept (messages.AcceptRequest) returns (messages.AcceptResponse);
 }

@@ -2,7 +2,8 @@ use crate::models::{LogEntry, LogPosition};
 use crate::roles::{Follower, Leader, PaxosRole, util};
 use crate::state_machine::PaxosState;
 use crate::{
-    PaxosEvent, PaxosSharedContext, PreVoteResponse, VoteOutcome, VoteRejection, VoteResponse,
+    ClientWriteResponse, PaxosEvent, PaxosSharedContext, PreVoteResponse, VoteOutcome,
+    VoteRejection, VoteResponse,
 };
 use chrono::{DateTime, Utc};
 use spx_lib::count_down_clock::CountDownClock;
@@ -276,6 +277,13 @@ impl PaxosRole for Candidate {
             }
             PaxosEvent::AcceptRequestReceived(_) | PaxosEvent::AcceptResponseReceived(_) => {
                 // Candidate is in the middle of voting, ignore accept messages
+                Ok(PaxosState::Candidate(self))
+            }
+            PaxosEvent::ClientWriteRequestReceived(command) => {
+                let _ = command.send(ClientWriteResponse {
+                    success: false,
+                    error: Some("not the leader".to_string()),
+                });
                 Ok(PaxosState::Candidate(self))
             }
         }
