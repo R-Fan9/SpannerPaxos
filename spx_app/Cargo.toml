@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-spx_core = { path = "../core" }
-spx_lib = { path = "../lib" }
-spx_protocol = { path = "../protocol" }
+spx_core = { path = "../spx_core" }
+spx_lib = { path = "../spx_lib" }
+spx_protocol = { path = "../spx_protocol" }
 tokio = { version = "1.50.0", features = ["macros", "rt-multi-thread"] }
 tokio-util = "0.7.18"
 tonic = "0.14.5"
