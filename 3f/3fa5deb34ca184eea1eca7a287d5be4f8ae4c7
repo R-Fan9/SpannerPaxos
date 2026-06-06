@@ -1,0 +1,20 @@
+spx_core/src/roles/leader.rs
+  s_d70c83ec335282::t_c9d44158a0370a 36,38
+  s_d70c83ec335282::t_e1444d5de202a2 220,229,242
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "3f3fa5deb34ca184eea1eca7a287d5be4f8ae4c7",
+  "prompts": {},
+  "sessions": {
+    "s_d70c83ec335282": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9c3003be-696a-45c8-b752-c55dd0d7d18d",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ricky Fan <haozhengfan@geotab.com>"
+    }
+  }
+}
