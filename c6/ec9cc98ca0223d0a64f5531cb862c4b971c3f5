@@ -1,0 +1,74 @@
+spx_core/src/context/mod.rs
+  s_d70c83ec335282::t_2a0f4263ec25bd 89,107,111-112
+  s_d70c83ec335282::t_1d34a54d6b51ae 9
+  s_d70c83ec335282::t_7c5638c2401023 106
+  s_d70c83ec335282::t_06adccf89c0fe4 69-72,96,105,113-114,128-142
+  s_d70c83ec335282::t_7d38714b529137 73,78-80
+  s_d70c83ec335282::t_d2b778a5724b59 74-77
+  s_d70c83ec335282::t_ec077c27de12a1 12-14,16-20
+  s_d70c83ec335282::t_bf66bd7ab627fd 119-127
+spx_core/src/lib.rs
+  s_d70c83ec335282::t_225a8339c6629b 10
+spx_core/src/roles/follower.rs
+  s_d70c83ec335282::t_82b11a73521f6b 487
+  s_d70c83ec335282::t_af659f9f28194e 488
+spx_core/src/context/lease_watcher.rs
+  s_d70c83ec335282::t_1d298ab55d604f 1-4,6-27,29-32,38-41,43-53
+  s_d70c83ec335282::t_fbfbcb68df0f26 5
+  s_d70c83ec335282::t_b9c58cba5d8a27 28,33-37,42
+spx_core/src/context/write_flush_watcher.rs
+  s_d70c83ec335282::t_a50d518607327b 1-2,4-17,24-25
+  s_d70c83ec335282::t_f1a8807f6f94df 3
+  s_d70c83ec335282::t_0700697785a633 18-23
+spx_core/src/roles/candidate.rs
+  s_d70c83ec335282::t_8657f54814d6c6 290
+  s_d70c83ec335282::t_46472f3cb00f31 289
+  s_d70c83ec335282::t_e4decc1b2dab7f 158
+spx_core/src/state_machine/mod.rs
+  s_d70c83ec335282::t_d60c822cd5df28 55,68-72,92-97
+  s_d70c83ec335282::t_4e305642eaad9b 59
+  s_d70c83ec335282::t_b5722e81120301 79-90
+  s_d70c83ec335282::t_48e0fe430a063e 45
+  s_d70c83ec335282::t_0b64a6b1b1f150 58,91,98-101
+spx_core/src/event.rs
+  s_d70c83ec335282::t_399cf2b102b0eb 23-26
+  s_d70c83ec335282::t_67b2d1d955b5b2 70
+  s_d70c83ec335282::t_4dd04f90fc29bc 69
+spx_core/src/context/accept_timeout_check_watcher.rs
+  s_d70c83ec335282::t_2dc6b793ee6640 1-25
+spx_core/src/roles/leader.rs
+  s_d70c83ec335282::t_a57644bed15f3c 87-88
+  s_d70c83ec335282::t_ebae793c374d99 460-461
+  s_d70c83ec335282::t_3190400ab60b14 114
+  s_d70c83ec335282::t_0eba3c722d3e73 284-286,288,290-301,303
+  s_d70c83ec335282::t_07bec80d3c90fa 102,108
+  s_d70c83ec335282::t_104de77f7ebbff 249,405
+  s_d70c83ec335282::t_057cc5155742d6 81-82,85
+  s_d70c83ec335282::t_10f0ef81f3a625 12,72-77
+  s_d70c83ec335282::t_5826d547ede849 125,128,133
+  s_d70c83ec335282::t_bb02365c48cd1e 89-94,109-113
+  s_d70c83ec335282::t_4aec033536a239 134
+  s_d70c83ec335282::t_7226a2e8027fb5 287,289
+  s_d70c83ec335282::t_e3a434f7ebdb43 464-467
+  s_d70c83ec335282::t_6a83348808ac43 10,16-61,64-65,83-84,95-101,103-107,120-123,127,167-168,181,187,192,197,205,236-237,239-241,307-324,370,375-379,381,385-389,416,421-424,426-427,430-436,462-463
+  s_d70c83ec335282::t_fb6248f6233374 247
+spx_core/src/roles/precandidate.rs
+  s_d70c83ec335282::t_cdfb2f9604ad5e 291
+  s_d70c83ec335282::t_5a44a8d5fe1dfa 290
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "c6ec9cc98ca0223d0a64f5531cb862c4b971c3f5",
+  "prompts": {},
+  "sessions": {
+    "s_d70c83ec335282": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9c3003be-696a-45c8-b752-c55dd0d7d18d",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ricky Fan <haozhengfan@geotab.com>"
+    }
+  }
+}
