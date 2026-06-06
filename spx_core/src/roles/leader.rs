@@ -7,34 +7,131 @@ use crate::{
 };
 use chrono::{DateTime, Utc};
 use spx_lib::true_time::TrueTime;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::error::Error;
+use std::time::Duration;
 use tonic::async_trait;
 use uuid::Uuid;
 
+struct InFlightBatch {
+    sent_at: DateTime<Utc>,
+    // The highest log slot included in this batch
+    highest_slot: u32,
+}
+
+struct FollowerState {
+    log_position: LogPosition,
+    // FIFO queue of batches dispatched to this follower but not yet acknowledged
+    in_flight_batches: VecDeque<InFlightBatch>,
+}
+
+impl FollowerState {
+    fn new(log_position: LogPosition) -> Self {
+        Self {
+            log_position,
+            in_flight_batches: VecDeque::new(),
+        }
+    }
+
+    fn push_batch(&mut self, highest_slot: u32) {
+        self.in_flight_batches.push_back(InFlightBatch {
+            sent_at: Utc::now(),
+            highest_slot,
+        });
+    }
+
+    // Clears all batches whose highest_slot is at or below `acked_slot`.
+    fn ack_batches_up_to(&mut self, acked_slot: u32) {
+        while self
+            .in_flight_batches
+            .front()
+            .is_some_and(|b| b.highest_slot <= acked_slot)
+        {
+            self.in_flight_batches.pop_front();
+        }
+    }
+
+    // Clears all in-flight batches and resets sent_slot to just before next_slot,
+    // used when a rejection is received or a batch times out.
+    fn clear_in_flight_batches(&mut self) {
+        self.in_flight_batches.clear();
+        self.log_position.sent_slot = self.log_position.next_slot.saturating_sub(1);
+    }
+}
+
 // The state of Paxos group leader
 pub struct Leader {
-    // A map of Paxos group member IDs to their local WAL positions
-    score_board: HashMap<Uuid, LogPosition>,
+    // Per-follower replication state and in-flight batch tracking
+    score_board: HashMap<Uuid, FollowerState>,
 
     // Tracks the most recent echoed t_send per follower; used for quorum lease renewal
     last_contact: HashMap<Uuid, DateTime<Utc>>,
 
-    // In-flight client write commands awaiting quorum commit, keyed by slot number
+    // In-flight client write requests awaiting quorum commit, keyed by slot number
     in_flight_writes: BTreeMap<u32, PaxosCommand<ClientWriteRequest, ClientWriteResponse>>,
+
+    // Number of client writes buffered since the last dispatch_accept_request call
+    pending_write_count: usize,
+
+    // Dispatch is triggered when this many writes are buffered, even if the timer has not fired
+    write_batch_size: usize,
 }
 
 impl Leader {
-    pub fn new(score_board: HashMap<Uuid, LogPosition>) -> Self {
+    pub const DEFAULT_WRITE_BATCH_SIZE: usize = 1000;
+    pub const DEFAULT_WRITE_FLUSH_INTERVAL: Duration = Duration::from_millis(10);
+    const ACCEPT_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+    const ACCEPT_TIMEOUT_CHECK_INTERVAL: Duration = Duration::from_secs(60);
+
+    fn spawn_write_flush_timer(ctx: &PaxosSharedContext) {
+        let token = ctx.get_cancellation_token();
+        let signal = ctx.signal_write_flush_fn();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = token.cancelled() => break,
+                    _ = tokio::time::sleep(Self::DEFAULT_WRITE_FLUSH_INTERVAL) => signal(),
+                }
+            }
+        });
+    }
+
+    fn spawn_accept_timeout_check_timer(ctx: &PaxosSharedContext) {
+        let token = ctx.get_cancellation_token();
+        let signal = ctx.signal_accept_timeout_check_fn();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = token.cancelled() => break,
+                    _ = tokio::time::sleep(Self::ACCEPT_TIMEOUT_CHECK_INTERVAL) => signal(),
+                }
+            }
+        });
+    }
+
+    pub fn new(score_board: HashMap<Uuid, LogPosition>, ctx: &PaxosSharedContext) -> Self {
         let last_contact = score_board
             .keys()
             .copied()
             .map(|id| (id, DateTime::<Utc>::UNIX_EPOCH))
             .collect();
+
+        let score_board = score_board
+            .into_iter()
+            .map(|(id, pos)| (id, FollowerState::new(pos)))
+            .collect();
+
+        Self::spawn_write_flush_timer(ctx);
+        Self::spawn_accept_timeout_check_timer(ctx);
+
         Self {
             score_board,
             last_contact,
             in_flight_writes: BTreeMap::new(),
+            pending_write_count: 0,
+            write_batch_size: Self::DEFAULT_WRITE_BATCH_SIZE,
         }
     }
 
@@ -67,8 +164,8 @@ impl Leader {
 
             // Update every peer's next_slot to just past the leader's last log slot
             let next_slot = last.slot + 1;
-            for position in self.score_board.values_mut() {
-                position.next_slot = next_slot;
+            for fs in self.score_board.values_mut() {
+                fs.log_position.next_slot = next_slot;
             }
         }
 
@@ -81,22 +178,23 @@ impl Leader {
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         let member_ids: Vec<Uuid> = self.score_board.keys().copied().collect();
         for member_id in member_ids {
-            self.dispatch_accept_request_to_member(member_id, ctx)
+            self.dispatch_accept_request_to_follower(member_id, ctx)
                 .await?;
         }
         Ok(())
     }
 
-    async fn dispatch_accept_request_to_member(
+    async fn dispatch_accept_request_to_follower(
         &mut self,
         member_id: Uuid,
         ctx: &PaxosSharedContext,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        let pos = self
+        let fs = self
             .score_board
             .get(&member_id)
             .expect("dispatch target must be in the score board");
 
+        let pos = &fs.log_position;
         let wal = ctx.get_wal();
         let sent_slot = pos.sent_slot;
         let prev_log_slot = if sent_slot > pos.next_slot {
@@ -104,6 +202,7 @@ impl Leader {
         } else {
             pos.next_slot.saturating_sub(1)
         };
+
         let prev_log_term = if prev_log_slot == 0 {
             0
         } else {
@@ -134,22 +233,29 @@ impl Leader {
             .await?;
 
         if let Some(slot) = last_sent_slot {
-            self.score_board
+            let fs = self
+                .score_board
                 .get_mut(&member_id)
-                .expect("dispatch target must be in the score board")
-                .sent_slot = slot;
+                .expect("dispatch target must be in the score board");
+            fs.log_position.sent_slot = slot;
+            fs.push_batch(slot);
         }
 
         Ok(())
     }
 
-    fn resolve_committed_writes(&mut self, committed_slot: u32) {
+    // Responds to all pending client write requests at or below `committed_slot`, where
+    // `committed_slot` is the highest slot at which a quorum of followers has persisted the log.
+    fn resolve_in_flight_writes(&mut self, committed_slot: u32) {
         let still_in_flight = self.in_flight_writes.split_off(&(committed_slot + 1));
         let committed = std::mem::replace(&mut self.in_flight_writes, still_in_flight);
         for (_, cmd) in committed {
             // Ignore send errors — the client may have disconnected before the write committed,
             // which is not a leader-level failure
-            let _ = cmd.send(ClientWriteResponse { success: true, error: None });
+            let _ = cmd.send(ClientWriteResponse {
+                success: true,
+                error: None,
+            });
         }
     }
 
@@ -165,16 +271,55 @@ impl Leader {
         ctx.get_wal_mut().append(slot, current_term, value.clone());
         ctx.set_last_log_slot(slot);
         ctx.set_last_log_term(current_term);
-        ctx.get_uncommitted_logs_mut().insert(slot, LogEntry {
-            term: current_term,
+        ctx.get_uncommitted_logs_mut().insert(
             slot,
-            entry: value,
-        });
-
-        self.dispatch_accept_request(ctx).await?;
+            LogEntry {
+                term: current_term,
+                slot,
+                entry: value,
+            },
+        );
 
         self.in_flight_writes.insert(slot, command);
+        self.pending_write_count += 1;
+
+        // If the batch is full, wake the flush watcher immediately so the state machine's
+        // select arm fires without queuing behind other pending PaxosEvents.
+        if self.pending_write_count >= self.write_batch_size {
+            ctx.signal_write_flush();
+        }
+
         Ok(())
+    }
+
+    async fn handle_write_flush(
+        &mut self,
+        ctx: &mut PaxosSharedContext,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        if self.pending_write_count == 0 {
+            return Ok(());
+        }
+        self.dispatch_accept_request(ctx).await?;
+        self.pending_write_count = 0;
+        Ok(())
+    }
+
+    // Scans every follower's in-flight batch queue and clears batches whose oldest entry has
+    // been waiting longer than ACCEPT_REQUEST_TIMEOUT, resetting that follower's sent_slot.
+    fn handle_accept_timeout_check(&mut self) {
+        let now = Utc::now();
+        let timeout = chrono::Duration::from_std(Self::ACCEPT_REQUEST_TIMEOUT)
+            .expect("timeout fits in chrono::Duration");
+
+        for fs in self.score_board.values_mut() {
+            if fs
+                .in_flight_batches
+                .front()
+                .is_some_and(|b| now - b.sent_at > timeout)
+            {
+                fs.clear_in_flight_batches();
+            }
+        }
     }
 
     async fn handle_accept_response(
@@ -221,24 +366,27 @@ impl Leader {
         }
 
         if response.success {
-            // Follower successfully appended — advance its position in the score board
             let last_written_slot = response.last_written_slot;
-            let pos = self
+            let fs = self
                 .score_board
                 .get_mut(&member_id)
                 .expect("accept response received from unknown member");
 
-            if last_written_slot > pos.match_slot {
-                pos.match_slot = last_written_slot;
-                pos.next_slot = last_written_slot + 1;
-                if pos.sent_slot < pos.match_slot {
-                    pos.sent_slot = pos.match_slot;
+            if last_written_slot > fs.log_position.match_slot {
+                fs.log_position.match_slot = last_written_slot;
+                fs.log_position.next_slot = last_written_slot + 1;
+                if fs.log_position.sent_slot < fs.log_position.match_slot {
+                    fs.log_position.sent_slot = fs.log_position.match_slot;
                 }
+                fs.ack_batches_up_to(last_written_slot);
 
                 // The follower's match_slot advanced; recheck whether a quorum has replicated
                 // enough to advance the committed slot.
-                let mut follower_slots: Vec<u32> =
-                    self.score_board.values().map(|p| p.match_slot).collect();
+                let mut follower_slots: Vec<u32> = self
+                    .score_board
+                    .values()
+                    .map(|fs| fs.log_position.match_slot)
+                    .collect();
                 follower_slots.sort_unstable_by(|a, b| b.cmp(a));
 
                 // Gather the top (quorum_size - 1) follower match_slots plus the leader's own
@@ -254,7 +402,7 @@ impl Leader {
                     ctx.set_committed_slot(min_quorum_slot);
                     ctx.get_uncommitted_logs_mut()
                         .retain(|&slot, _| slot > min_quorum_slot);
-                    self.resolve_committed_writes(min_quorum_slot);
+                    self.resolve_in_flight_writes(min_quorum_slot);
                 }
             }
 
@@ -265,26 +413,31 @@ impl Leader {
             return Ok(());
         };
 
-        let pos = self
+        let fs = self
             .score_board
             .get_mut(&member_id)
             .expect("accept response received from unknown member");
 
+        // Clear all in-flight batches for this follower — the rejection means our view of its
+        // log is inconsistent and we need to re-probe from scratch.
+        fs.clear_in_flight_batches();
+
         if hint.conflict_term == 0 {
-            // Follower log is too short — back up to the first missing slot
-            pos.next_slot = hint.conflict_first_slot;
+            // Follower log is too short — back up to the first missing slot from the follower
+            fs.log_position.next_slot = hint.conflict_first_slot;
         } else {
             // Term mismatch at anchor slot
-            pos.next_slot = match ctx.get_wal().find_highest_slot_for_term(hint.conflict_term) {
-                // Leader has entries for this term — align just past its last slot
-                Some(leader_last_slot) => leader_last_slot + 1,
-                // Leader has no entries for this term — skip to follower's hint
-                None => hint.conflict_first_slot,
-            };
+            fs.log_position.next_slot =
+                match ctx.get_wal().find_highest_slot_for_term(hint.conflict_term) {
+                    // Leader has entries for this term — align just past its last slot
+                    Some(leader_last_slot) => leader_last_slot + 1,
+                    // Leader has no entries for this term — skip to follower's hint
+                    None => hint.conflict_first_slot,
+                };
         }
-        pos.sent_slot = pos.next_slot.saturating_sub(1);
 
-        self.dispatch_accept_request_to_member(member_id, ctx).await
+        // Dispatch another accept request to the follower with updated log anchor and entries
+        self.dispatch_accept_request_to_follower(member_id, ctx).await
     }
 }
 
@@ -302,6 +455,14 @@ impl PaxosRole for Leader {
             }
             PaxosEvent::ClientWriteRequestReceived(command) => {
                 self.handle_client_write(command, ctx).await?;
+                Ok(PaxosState::Leader(self))
+            }
+            PaxosEvent::WriteFlushTimerFired => {
+                self.handle_write_flush(ctx).await?;
+                Ok(PaxosState::Leader(self))
+            }
+            PaxosEvent::AcceptTimeoutCheckFired => {
+                self.handle_accept_timeout_check();
                 Ok(PaxosState::Leader(self))
             }
             _ => Ok(PaxosState::Leader(self)),

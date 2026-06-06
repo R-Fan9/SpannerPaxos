@@ -42,6 +42,7 @@ impl PaxosStateMachine {
         }
     }
 
+
     pub async fn start(
         &self,
         cancellation_token: CancellationToken,
@@ -51,8 +52,11 @@ impl PaxosStateMachine {
             self.peer_ids.clone(),
             self.dispatcher.clone(),
             self.event_tx.clone(),
+            cancellation_token.clone(),
         );
         let lease_watcher = ctx.lease_watcher();
+        let write_flush_watcher = ctx.write_flush_watcher();
+        let accept_timeout_check_watcher = ctx.accept_timeout_check_watcher();
         let mut current_state = PaxosState::Follower(Follower::new(None));
         let mut event_rx = self.event_rx.lock().await;
 
@@ -61,17 +65,40 @@ impl PaxosStateMachine {
                 // This ensures the cancellation branch is checked first if multiple branches are ready
                 biased;
 
-                // If the cancellation token is triggered, break out of the loop
-                _ = cancellation_token.cancelled() => {
-                    break;
-                }
-
-                // Continuously wait for leader lease expiration
-                _ = lease_watcher.wait_until_expired() => {
+                // Continuously wait for leader lease expiration; returns early on cancellation
+                _ = lease_watcher.wait_until_expired(&cancellation_token) => {
+                    if cancellation_token.is_cancelled() {
+                        break;
+                    }
                     current_state = current_state
                         .process_event(PaxosEvent::LeaderLeaseExpired, &mut ctx)
                         .await
                         .expect("Failed to process leader lease expiration");
+                }
+
+                // Wake on a fixed interval to let the leader check for timed-out in-flight
+                // batches, bypassing the event queue; returns early on cancellation
+                _ = accept_timeout_check_watcher.wait_for_check(&cancellation_token) => {
+                    if cancellation_token.is_cancelled() {
+                        break;
+                    }
+                    current_state = current_state
+                        .process_event(PaxosEvent::AcceptTimeoutCheckFired, &mut ctx)
+                        .await
+                        .expect("Failed to process accept timeout check");
+                }
+
+                // Wake immediately when the leader signals a write flush (batch full or timer
+                // fired), bypassing the event queue so the dispatch is not delayed by other events;
+                // returns early on cancellation
+                _ = write_flush_watcher.wait_for_flush(&cancellation_token) => {
+                    if cancellation_token.is_cancelled() {
+                        break;
+                    }
+                    current_state = current_state
+                        .process_event(PaxosEvent::WriteFlushTimerFired, &mut ctx)
+                        .await
+                        .expect("Failed to process write flush");
                 }
 
                 // Listen to the next incoming Paxos event from the channel

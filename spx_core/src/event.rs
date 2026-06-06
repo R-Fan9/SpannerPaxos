@@ -1,4 +1,7 @@
-use crate::{AcceptRequest, AcceptResponse, ClientWriteRequest, ClientWriteResponse, PaxosCommand, PreVoteRequest, PreVoteResponse, VoteRequest, VoteResponse};
+use crate::{
+    AcceptRequest, AcceptResponse, ClientWriteRequest, ClientWriteResponse, PaxosCommand,
+    PreVoteRequest, PreVoteResponse, VoteRequest, VoteResponse,
+};
 use std::fmt;
 
 pub enum PaxosEvent {
@@ -13,6 +16,13 @@ pub enum PaxosEvent {
 
     // The vote campaign deadline has passed without reaching quorum
     VoteCampaignExpired,
+
+    // The write flush timer fired; the leader should dispatch any buffered writes to followers
+    WriteFlushTimerFired,
+
+    // The periodic accept timeout check fired; the leader should inspect each follower's
+    // in-flight batch queue and clear any batches that have been waiting too long
+    AcceptTimeoutCheckFired,
 
     // This member has received a pre-vote message from a leader pre-candidate
     PreVoteRequestReceived(PaxosCommand<PreVoteRequest, PreVoteResponse>),
@@ -56,6 +66,8 @@ impl PaxosEvent {
             PaxosEvent::AcceptResponseReceived(r) => Some(r.term),
             // Client writes carry no Paxos term
             PaxosEvent::ClientWriteRequestReceived(_) => None,
+            PaxosEvent::WriteFlushTimerFired => None,
+            PaxosEvent::AcceptTimeoutCheckFired => None,
         }
     }
 }

@@ -155,7 +155,7 @@ impl Candidate {
 
             // Transition to a leader with the pre-built score board
             let score_board = std::mem::take(&mut self.score_board);
-            let leader = Leader::new(score_board);
+            let leader = Leader::new(score_board, ctx);
 
             // Quorum reached: flush the collected uncommitted entries into ctx before processing
             self.flush_uncommitted_logs(ctx);
@@ -286,6 +286,8 @@ impl PaxosRole for Candidate {
                 });
                 Ok(PaxosState::Candidate(self))
             }
+            PaxosEvent::WriteFlushTimerFired => Ok(PaxosState::Candidate(self)),
+            PaxosEvent::AcceptTimeoutCheckFired => Ok(PaxosState::Candidate(self)),
         }
     }
 }

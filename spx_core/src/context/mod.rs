@@ -6,42 +6,20 @@ use spx_lib::write_ahead_log::WriteAheadLog;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
-use tokio::sync::{Notify, RwLock};
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-// Holds the shared lease state between PaxosSharedContext and the LeaseWatcher.
-// Wrapped in Arc so both sides can cheaply clone a handle without borrowing ctx.
-struct LeaseState {
-    expiry: RwLock<Option<DateTime<Utc>>>,
-    notify: Notify,
-}
+mod accept_timeout_check_watcher;
+mod lease_watcher;
+mod write_flush_watcher;
 
-// A lightweight handle used in tokio::select! to wait for lease expiration without
-// borrowing PaxosSharedContext, allowing &mut ctx to be passed into event handlers.
-pub struct LeaseWatcher(Arc<LeaseState>);
+use accept_timeout_check_watcher::AcceptTimeoutCheckState;
+use lease_watcher::LeaseState;
+use write_flush_watcher::WriteFlushState;
 
-impl LeaseWatcher {
-    pub async fn wait_until_expired(&self) {
-        loop {
-            let lease = *self.0.expiry.read().await;
-            match lease {
-                None => {
-                    self.0.notify.notified().await;
-                }
-                Some(expiry) => {
-                    tokio::select! {
-                        biased;
-                        _ = self.0.notify.notified() => continue,
-                        _ = TrueTime::commit_wait(expiry) => {
-                            *self.0.expiry.write().await = None;
-                            return;
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
+pub use accept_timeout_check_watcher::AcceptTimeoutCheckWatcher;
+pub use lease_watcher::LeaseWatcher;
+pub use write_flush_watcher::WriteFlushWatcher;
 
 pub struct PaxosSharedContext {
     // The unique identifier for this member (node)
@@ -88,6 +66,18 @@ pub struct PaxosSharedContext {
 
     // The write-ahead log service for persisting log entries
     wal: WriteAheadLog,
+
+    // Notified by the leader when buffered client writes should be flushed to followers,
+    // either because the batch size threshold was reached or the periodic timer fired.
+    write_flush: Arc<WriteFlushState>,
+
+    // Notified on a fixed interval so the leader can check for timed-out in-flight batches
+    // without queuing behind other pending PaxosEvents.
+    accept_timeout_check: Arc<AcceptTimeoutCheckState>,
+
+    // The cancellation token for the main state machine loop; shared with background tasks
+    // spawned by roles so they stop cleanly when the state machine shuts down.
+    cancellation_token: CancellationToken,
 }
 
 impl PaxosSharedContext {
@@ -96,17 +86,14 @@ impl PaxosSharedContext {
         peer_ids: HashSet<Uuid>,
         dispatcher: Arc<dyn PaxosDispatcher>,
         event_tx: Sender<PaxosEvent>,
+        cancellation_token: CancellationToken,
     ) -> Self {
         Self {
             member_id,
             peer_ids,
             term: 0,
             t_safe: None,
-            // Initialize to an already-expired time so LeaderLeaseExpired fires immediately on startup
-            lease: Arc::new(LeaseState {
-                expiry: RwLock::new(Some(DateTime::<Utc>::UNIX_EPOCH)),
-                notify: Notify::new(),
-            }),
+            lease: LeaseState::new_expired(),
             last_log_term: 0,
             last_log_slot: 0,
             committed_slot: 0,
@@ -115,11 +102,42 @@ impl PaxosSharedContext {
             dispatcher,
             event_tx,
             wal: WriteAheadLog::new(),
+            write_flush: WriteFlushState::new(),
+            accept_timeout_check: AcceptTimeoutCheckState::new(),
+            cancellation_token,
         }
+    }
+
+    pub fn get_cancellation_token(&self) -> CancellationToken {
+        self.cancellation_token.clone()
     }
 
     pub fn lease_watcher(&self) -> LeaseWatcher {
         LeaseWatcher(Arc::clone(&self.lease))
+    }
+
+    pub fn accept_timeout_check_watcher(&self) -> AcceptTimeoutCheckWatcher {
+        AcceptTimeoutCheckWatcher(Arc::clone(&self.accept_timeout_check))
+    }
+
+    pub fn signal_accept_timeout_check_fn(&self) -> impl Fn() + Send + 'static {
+        let state = Arc::clone(&self.accept_timeout_check);
+        move || state.0.notify_one()
+    }
+
+    pub fn write_flush_watcher(&self) -> WriteFlushWatcher {
+        WriteFlushWatcher(Arc::clone(&self.write_flush))
+    }
+
+    pub fn signal_write_flush(&self) {
+        self.write_flush.0.notify_one();
+    }
+
+    // Returns a cheap, Send closure that signals the write flush watcher. Used by the leader's
+    // periodic timer task which cannot borrow ctx across an await point.
+    pub fn signal_write_flush_fn(&self) -> impl Fn() + Send + 'static {
+        let state = Arc::clone(&self.write_flush);
+        move || state.0.notify_one()
     }
 
     pub fn get_event_sender(&self) -> Sender<PaxosEvent> {

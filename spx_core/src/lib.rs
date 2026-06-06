@@ -7,8 +7,7 @@ mod models;
 mod roles;
 mod state_machine;
 
-use context::PaxosSharedContext;
-
+pub use context::PaxosSharedContext;
 pub use dispatcher::PaxosDispatcher;
 
 pub use command::PaxosCommand;

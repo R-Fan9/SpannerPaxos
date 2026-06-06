@@ -287,6 +287,8 @@ impl PaxosRole for PreCandidate {
                 });
                 Ok(PaxosState::PreCandidate(self))
             }
+            PaxosEvent::WriteFlushTimerFired => Ok(PaxosState::PreCandidate(self)),
+            PaxosEvent::AcceptTimeoutCheckFired => Ok(PaxosState::PreCandidate(self)),
         }
     }
 }

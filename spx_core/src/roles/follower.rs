@@ -484,6 +484,8 @@ impl PaxosRole for Follower {
                 });
                 Ok(PaxosState::Follower(self))
             }
+            PaxosEvent::WriteFlushTimerFired => Ok(PaxosState::Follower(self)),
+            PaxosEvent::AcceptTimeoutCheckFired => Ok(PaxosState::Follower(self)),
         }
     }
 }
