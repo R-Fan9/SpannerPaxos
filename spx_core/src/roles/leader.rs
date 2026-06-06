@@ -33,9 +33,9 @@ impl FollowerState {
         }
     }
 
-    fn push_batch(&mut self, highest_slot: u32) {
+    fn push_batch(&mut self, highest_slot: u32, sent_at: DateTime<Utc>) {
         self.in_flight_batches.push_back(InFlightBatch {
-            sent_at: Utc::now(),
+            sent_at,
             highest_slot,
         });
     }
@@ -217,6 +217,7 @@ impl Leader {
             .collect();
 
         let last_sent_slot = entries.last().map(|e| e.slot);
+        let t_send = TrueTime::now().earliest;
 
         let request = AcceptRequest {
             term: ctx.get_current_term(),
@@ -225,7 +226,7 @@ impl Leader {
             prev_log_term,
             entries,
             leader_commit_slot: ctx.get_committed_slot(),
-            t_send: TrueTime::now().earliest,
+            t_send,
         };
 
         ctx.get_dispatcher()
@@ -238,7 +239,7 @@ impl Leader {
                 .get_mut(&member_id)
                 .expect("dispatch target must be in the score board");
             fs.log_position.sent_slot = slot;
-            fs.push_batch(slot);
+            fs.push_batch(slot, t_send);
         }
 
         Ok(())
