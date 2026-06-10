@@ -1,0 +1,103 @@
+spx_core/src/context/heartbeat_watcher.rs
+  s_8c14bd4f21344b::t_8b5d192607e64d 1-4,6-25
+  s_8c14bd4f21344b::t_b6e46d082cc886 5
+spx_lib/src/write_ahead_log/wal.rs
+  4fc875b56a2bb3ea 1,4-19,21,31-32,40,43,46,57,66,75-76,78
+spx_core/src/state_machine/state.rs
+  s_8c14bd4f21344b::t_160ff440aa37f1 24
+  s_8c14bd4f21344b::t_1c69974a06fb05 5
+  s_8c14bd4f21344b::t_75bcdb8fe70202 21,23,25-26
+spx_core/src/roles/candidate.rs
+  s_8c14bd4f21344b::t_10fb5d0f4d5cf3 291
+spx_app/src/grpc/util/proto_conversions/vote.rs
+  4fc875b56a2bb3ea 1-2,18
+spx_core/src/event.rs
+  s_8c14bd4f21344b::t_fc32a6f9b4e5da 75
+  s_8c14bd4f21344b::t_830cdf1fedb368 27-30
+spx_core/src/roles/follower.rs
+  4fc875b56a2bb3ea 8,344,349-351
+  s_8c14bd4f21344b::t_17533439a14796 370-372
+  s_8c14bd4f21344b::t_d6f9357c7bd3e3 348
+  s_8c14bd4f21344b::t_cbc6879f52979c 369,373
+  s_8c14bd4f21344b::t_547dda63b0d6d1 494
+spx_protocol/proto/messages/accept.proto
+  s_8c14bd4f21344b::t_70c7f85e09baba 69-71
+  s_8c14bd4f21344b::t_54ee17afa869a7 26-29
+spx_core/src/context/mod.rs
+  s_8c14bd4f21344b::t_c5f434ea60039a 80-83
+  s_8c14bd4f21344b::t_f8e68f96f0f7be 265-277
+  s_8c14bd4f21344b::t_d984f1cc62023c 113
+  s_8c14bd4f21344b::t_cf7dd1c6aec467 13
+  s_8c14bd4f21344b::t_644090eb49854f 22
+  s_8c14bd4f21344b::t_2ba79e810cb54f 278-289
+spx_core/src/models/log_entry.rs
+  4fc875b56a2bb3ea 1
+spx_core/src/state_machine/mod.rs
+  s_8c14bd4f21344b::t_a6fbd7397aa529 60
+  s_8c14bd4f21344b::t_e7542d1e200b53 66,69-73,81-82,90-91
+  s_8c14bd4f21344b::t_5a2a5e94d845d1 76,85,94,112
+  s_8c14bd4f21344b::t_7103b262060042 99-106
+spx_core/src/roles/precandidate.rs
+  s_8c14bd4f21344b::t_1f344017a47b30 292
+spx_app/src/grpc/util/proto_conversions/accept.rs
+  s_8c14bd4f21344b::t_bdedcc37173bed 36,49
+  s_8c14bd4f21344b::t_06ac9a519a7546 14,23
+spx_lib/src/write_ahead_log/mod.rs
+  4fc875b56a2bb3ea 3
+spx_core/src/roles/leader.rs
+  s_8c14bd4f21344b::t_30d84e301ada15 257-259,262-263
+  s_8c14bd4f21344b::t_557f2df001ffa8 337-340
+  s_8c14bd4f21344b::t_1c26cf0216abef 531
+  s_8c14bd4f21344b::t_aacfa6354b79b7 217
+  s_8c14bd4f21344b::t_b18275764ec43d 88-91
+  s_8c14bd4f21344b::t_137437845758bf 251,279,284-285
+  s_8c14bd4f21344b::t_fe7d9f2e9c09f9 272
+  s_8c14bd4f21344b::t_7b20caac5df765 197,381
+  s_8c14bd4f21344b::t_87805287bce76e 1
+  s_8c14bd4f21344b::t_60fde4226b1f18 129-134,150-152,159
+  s_8c14bd4f21344b::t_db483586eb44aa 254-256
+  s_8c14bd4f21344b::t_e96422d345fd2f 261
+  s_8c14bd4f21344b::t_3e459bc75d80c7 350-373
+  s_8c14bd4f21344b::t_71cb430c67020b 483,487-490
+  4fc875b56a2bb3ea 73-78,81,182,243-245,248,293,296-301,322-327,329,332-334,496
+  s_8c14bd4f21344b::t_7f5fb81b36d91f 247
+  s_8c14bd4f21344b::t_cb608a56200ea5 481,484-486,491,494
+  s_8c14bd4f21344b::t_67b5b30dea3286 560-561
+  s_8c14bd4f21344b::t_28db7d27d6a552 99
+  s_8c14bd4f21344b::t_02df14e80cbb4c 10,14
+  s_8c14bd4f21344b::t_c3a2274d7a3c96 203,207
+  s_8c14bd4f21344b::t_c7d711875811ec 260
+  s_8c14bd4f21344b::t_6f7f5f3dad029d 320
+spx_core/src/messages/accept.rs
+  s_8c14bd4f21344b::t_3c4108013498a1 26-29
+  s_8c14bd4f21344b::t_41d0edb9e31c91 72-74
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "ca00160eb3a61cde529072b051dcc199ca941488",
+  "prompts": {
+    "4fc875b56a2bb3ea": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "93c24eff-6e2c-40e3-8741-681b556634a7",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ricky Fan <haozhengfan@geotab.com>",
+      "total_additions": 76,
+      "total_deletions": 66,
+      "accepted_lines": 68,
+      "overriden_lines": 3
+    }
+  },
+  "sessions": {
+    "s_8c14bd4f21344b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ecad64d0-bebf-4ec3-a99e-16b47816fc51",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ricky Fan <haozhengfan@geotab.com>"
+    }
+  }
+}
