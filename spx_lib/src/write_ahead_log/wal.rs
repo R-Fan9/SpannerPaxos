@@ -1,8 +1,24 @@
+use chrono::{DateTime, Utc};
 use std::collections::BTreeMap;
 
+#[derive(Clone)]
+pub struct LogEntry {
+    // The Paxos term in which this entry was proposed
+    pub term: u32,
+
+    // The position of this entry in the append-only log
+    pub slot: u32,
+
+    // The database command or mutation carried by this entry
+    pub entry: String,
+
+    // The latest bound of TrueTime at the moment this entry was written to the leader WAL.
+    // Used for commit_wait to enforce external consistency.
+    pub timestamp: DateTime<Utc>,
+}
+
 pub struct WriteAheadLog {
-    // slot → (term, value)
-    entries: BTreeMap<u32, (u32, String)>,
+    entries: BTreeMap<u32, LogEntry>,
 }
 
 impl WriteAheadLog {
@@ -12,61 +28,54 @@ impl WriteAheadLog {
         }
     }
 
-    pub fn append(&mut self, slot: u32, term: u32, value: String) {
-        self.entries.insert(slot, (term, value));
+    pub fn append(&mut self, entry: LogEntry) {
+        self.entries.insert(entry.slot, entry);
     }
 
-    /// Returns true if the WAL contains an entry at `slot`.
     pub fn has_entry(&self, slot: u32) -> bool {
         self.entries.contains_key(&slot)
     }
 
-    /// Returns the term stored at `slot`, or `None` if no entry exists for that slot.
     pub fn get_term(&self, slot: u32) -> Option<u32> {
-        self.entries.get(&slot).map(|(term, _)| *term)
+        self.entries.get(&slot).map(|e| e.term)
     }
 
-    /// Returns all entries with slot >= `from_slot`, in ascending slot order.
-    pub fn get_entries_from(&self, from_slot: u32) -> Vec<(u32, u32, String)> {
+    pub fn get_entries_from(&self, from_slot: u32) -> Vec<LogEntry> {
         self.entries
             .range(from_slot..)
-            .map(|(&slot, (term, value))| (slot, *term, value.clone()))
+            .map(|(_, e)| e.clone())
             .collect()
     }
 
-    /// Removes all entries with slot >= `starting_slot`.
     pub fn truncate_from(&mut self, starting_slot: u32) {
         self.entries.split_off(&starting_slot);
     }
 
-    /// Returns the highest slot logged at exactly `term`, or `None` if no entry exists for that term.
     pub fn find_highest_slot_for_term(&self, term: u32) -> Option<u32> {
         self.entries
             .iter()
-            .filter(|(_, (t, _))| *t == term)
+            .filter(|(_, e)| e.term == term)
             .map(|(slot, _)| *slot)
             .max()
     }
 
-    /// Returns the lowest slot logged at exactly `term`, or `None` if no entry exists for that term.
     /// Used by followers to report the first slot where log divergence could begin at a given term.
     pub fn find_lowest_slot_for_term(&self, term: u32) -> Option<u32> {
         self.entries
             .iter()
-            .filter(|(_, (t, _))| *t == term)
+            .filter(|(_, e)| e.term == term)
             .map(|(slot, _)| *slot)
             .min()
     }
 
-    /// Returns `(term, slot)` of the highest slot logged at `term`. If no entry exists for
-    /// `term`, decrements the term and retries until a match is found or all terms are exhausted.
     /// Used to locate the highest anchor point where a leader's log can safely align with the follower's log.
     pub fn find_highest_anchor(&self, term: u32) -> Option<(u32, u32)> {
         let mut current_term = term;
         loop {
-            let highest_slot = self.entries
+            let highest_slot = self
+                .entries
                 .iter()
-                .filter(|(_, (t, _))| *t == current_term)
+                .filter(|(_, e)| e.term == current_term)
                 .map(|(slot, _)| *slot)
                 .max();
 

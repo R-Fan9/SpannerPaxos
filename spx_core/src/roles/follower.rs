@@ -5,6 +5,7 @@ use crate::{
     PaxosSharedContext, PreVoteRequest, PreVoteResponse, VoteOutcome, VotePromise, VoteRejection,
     VoteRequest, VoteResponse,
 };
+use chrono::{DateTime, Utc};
 use spx_lib::count_down_clock::CountDownClock;
 use std::error::Error;
 use tonic::async_trait;
@@ -340,15 +341,14 @@ impl Follower {
             ctx.get_wal_mut().truncate_from(prev_log_slot + 1);
             let mut last_written_slot = prev_log_slot;
             for log_entry in &request.entries {
-                ctx.get_wal_mut()
-                    .append(log_entry.slot, log_entry.term, log_entry.entry.clone());
-
-                ctx.get_uncommitted_logs_mut().insert(log_entry.slot, LogEntry {
+                let entry = LogEntry {
                     term: log_entry.term,
                     slot: log_entry.slot,
                     entry: log_entry.entry.clone(),
-                });
-
+                    timestamp: log_entry.timestamp,
+                };
+                ctx.get_wal_mut().append(entry.clone());
+                ctx.get_uncommitted_logs_mut().insert(log_entry.slot, entry);
                 last_written_slot = log_entry.slot;
             }
 
@@ -365,6 +365,11 @@ impl Follower {
                 ctx.get_uncommitted_logs_mut()
                     .retain(|&slot, _| slot > new_committed_slot);
             }
+
+            // The leader promises the next write at slot n+1 will carry a timestamp >= min_next_ts,
+            // so reads are safe for any timestamp strictly below min_next_ts. Subtract 1ms (the
+            // smallest representable unit) to exclude min_next_ts itself, which a future write may claim.
+            ctx.advance_t_safe(request.min_next_ts - chrono::Duration::milliseconds(1));
 
             AcceptResponse {
                 member_id: current_member_id,
@@ -486,6 +491,7 @@ impl PaxosRole for Follower {
             }
             PaxosEvent::WriteFlushTimerFired => Ok(PaxosState::Follower(self)),
             PaxosEvent::AcceptTimeoutCheckFired => Ok(PaxosState::Follower(self)),
+            PaxosEvent::HeartbeatTimerFired => Ok(PaxosState::Follower(self)),
         }
     }
 }

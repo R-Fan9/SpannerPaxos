@@ -23,6 +23,10 @@ message AcceptRequest {
 
   // The TrueTime earliest bound at which the leader sent this request (unix milliseconds)
   int64 t_send = 7;
+
+  // A lower-bound promise on the timestamp that will be assigned to slot n+1, where n is the
+  // highest slot in this request. The next write will carry a timestamp >= this value (unix milliseconds).
+  int64 min_next_ts = 8;
 }
 
 message AcceptResponse {
@@ -62,4 +66,7 @@ message AcceptLogEntry {
 
   // The value stored at this log slot
   string entry = 3;
+
+  // The TrueTime latest bound at the moment the leader appended this entry (unix milliseconds)
+  int64 timestamp = 4;
 }

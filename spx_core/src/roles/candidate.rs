@@ -288,6 +288,7 @@ impl PaxosRole for Candidate {
             }
             PaxosEvent::WriteFlushTimerFired => Ok(PaxosState::Candidate(self)),
             PaxosEvent::AcceptTimeoutCheckFired => Ok(PaxosState::Candidate(self)),
+            PaxosEvent::HeartbeatTimerFired => Ok(PaxosState::Candidate(self)),
         }
     }
 }

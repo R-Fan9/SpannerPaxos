@@ -57,48 +57,51 @@ impl PaxosStateMachine {
         let lease_watcher = ctx.lease_watcher();
         let write_flush_watcher = ctx.write_flush_watcher();
         let accept_timeout_check_watcher = ctx.accept_timeout_check_watcher();
+        let heartbeat_watcher = ctx.heartbeat_watcher();
         let mut current_state = PaxosState::Follower(Follower::new(None));
         let mut event_rx = self.event_rx.lock().await;
 
         loop {
             tokio::select! {
-                // This ensures the cancellation branch is checked first if multiple branches are ready
+                // Checked first; wins over all other branches when the token is cancelled
                 biased;
 
-                // Continuously wait for leader lease expiration; returns early on cancellation
+                _ = cancellation_token.cancelled() => {
+                    break;
+                }
+
+                // Continuously wait for leader lease expiration
                 _ = lease_watcher.wait_until_expired(&cancellation_token) => {
-                    if cancellation_token.is_cancelled() {
-                        break;
-                    }
                     current_state = current_state
-                        .process_event(PaxosEvent::LeaderLeaseExpired, &mut ctx)
+                        .process_event(PaxosEvent::LeaderLeaseExpired, &mut ctx, &cancellation_token)
                         .await
                         .expect("Failed to process leader lease expiration");
                 }
 
-                // Wake on a fixed interval to let the leader check for timed-out in-flight
-                // batches, bypassing the event queue; returns early on cancellation
+                // Wake on a fixed interval to let the leader check for timed-out in-flight batches,
+                // bypassing the event queue
                 _ = accept_timeout_check_watcher.wait_for_check(&cancellation_token) => {
-                    if cancellation_token.is_cancelled() {
-                        break;
-                    }
                     current_state = current_state
-                        .process_event(PaxosEvent::AcceptTimeoutCheckFired, &mut ctx)
+                        .process_event(PaxosEvent::AcceptTimeoutCheckFired, &mut ctx, &cancellation_token)
                         .await
                         .expect("Failed to process accept timeout check");
                 }
 
-                // Wake immediately when the leader signals a write flush (batch full or timer
-                // fired), bypassing the event queue so the dispatch is not delayed by other events;
-                // returns early on cancellation
+                // Wake immediately when the leader signals a write flush (batch full or timer fired),
+                // bypassing the event queue so the dispatch is not delayed by other events
                 _ = write_flush_watcher.wait_for_flush(&cancellation_token) => {
-                    if cancellation_token.is_cancelled() {
-                        break;
-                    }
                     current_state = current_state
-                        .process_event(PaxosEvent::WriteFlushTimerFired, &mut ctx)
+                        .process_event(PaxosEvent::WriteFlushTimerFired, &mut ctx, &cancellation_token)
                         .await
                         .expect("Failed to process write flush");
+                }
+
+                // Wake when the heartbeat countdown expires (no client writes for 8 seconds)
+                _ = heartbeat_watcher.wait_for_heartbeat(&cancellation_token) => {
+                    current_state = current_state
+                        .process_event(PaxosEvent::HeartbeatTimerFired, &mut ctx, &cancellation_token)
+                        .await
+                        .expect("Failed to process heartbeat timer");
                 }
 
                 // Listen to the next incoming Paxos event from the channel
@@ -106,7 +109,7 @@ impl PaxosStateMachine {
                     match maybe_event {
                         Some(event) => {
                             current_state = current_state
-                                .process_event(event, &mut ctx)
+                                .process_event(event, &mut ctx, &cancellation_token)
                                 .await
                                 .expect("Failed to process Paxos event");
                         }

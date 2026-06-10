@@ -2,6 +2,7 @@ use crate::PaxosEvent;
 use crate::context::PaxosSharedContext;
 use crate::roles::{Candidate, Follower, Leader, PaxosRole, PreCandidate};
 use std::error::Error;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 // The state of a Paxos group member
@@ -17,7 +18,12 @@ impl PaxosState {
         self,
         event: PaxosEvent,
         ctx: &mut PaxosSharedContext,
+        cancellation_token: &CancellationToken,
     ) -> Result<PaxosState, Box<dyn Error + Send + Sync>> {
+        if cancellation_token.is_cancelled() {
+            return Err("state machine cancelled".into());
+        }
+
         let mut current_state = self;
 
         // Check if the event term is greater than the current term

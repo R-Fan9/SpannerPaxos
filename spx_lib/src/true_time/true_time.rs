@@ -23,11 +23,6 @@ impl TrueTime {
         }
     }
 
-    // Returns the latest bound of the current time interval
-    pub fn now_latest() -> DateTime<Utc> {
-        Self::now().latest
-    }
-
     // Returns true if the timestamp is definitely in the future (hasn't arrived yet)
     pub fn before(timestamp: DateTime<Utc>) -> bool {
         timestamp > Self::now().latest

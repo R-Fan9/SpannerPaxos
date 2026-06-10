@@ -23,6 +23,10 @@ pub struct AcceptRequest {
 
     // The TrueTime earliest bound at which the leader sent this request
     pub t_send: DateTime<Utc>,
+
+    // A lower-bound promise on the timestamp that will be assigned to slot n+1, where n is the
+    // highest slot in this request. The next write will carry a timestamp >= this value.
+    pub min_next_ts: DateTime<Utc>,
 }
 
 #[derive(Clone)]
@@ -65,4 +69,7 @@ pub struct AcceptLogEntry {
 
     // The value stored at this log slot
     pub entry: String,
+
+    // The TrueTime latest bound at the moment the leader appended this entry
+    pub timestamp: DateTime<Utc>,
 }

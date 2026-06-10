@@ -10,6 +10,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 mod accept_timeout_check_watcher;
+mod heartbeat_watcher;
 mod lease_watcher;
 mod write_flush_watcher;
 
@@ -18,6 +19,7 @@ use lease_watcher::LeaseState;
 use write_flush_watcher::WriteFlushState;
 
 pub use accept_timeout_check_watcher::AcceptTimeoutCheckWatcher;
+pub use heartbeat_watcher::{HeartbeatState, HeartbeatWatcher};
 pub use lease_watcher::LeaseWatcher;
 pub use write_flush_watcher::WriteFlushWatcher;
 
@@ -75,6 +77,10 @@ pub struct PaxosSharedContext {
     // without queuing behind other pending PaxosEvents.
     accept_timeout_check: Arc<AcceptTimeoutCheckState>,
 
+    // Notified when the heartbeat countdown expires (no client writes for 8 seconds), waking
+    // the leader to broadcast a heartbeat accept request to advance t_safe on followers.
+    heartbeat: Arc<HeartbeatState>,
+
     // The cancellation token for the main state machine loop; shared with background tasks
     // spawned by roles so they stop cleanly when the state machine shuts down.
     cancellation_token: CancellationToken,
@@ -104,6 +110,7 @@ impl PaxosSharedContext {
             wal: WriteAheadLog::new(),
             write_flush: WriteFlushState::new(),
             accept_timeout_check: AcceptTimeoutCheckState::new(),
+            heartbeat: HeartbeatState::new(),
             cancellation_token,
         }
     }
@@ -253,6 +260,31 @@ impl PaxosSharedContext {
             last_log_term: self.last_log_term,
             last_log_slot: self.last_log_slot,
         }
+    }
+
+    pub fn get_t_safe(&self) -> Option<DateTime<Utc>> {
+        self.t_safe
+    }
+
+    // Advances t_safe to `ts` only if `ts` is later than the current value.
+    pub fn advance_t_safe(&mut self, ts: DateTime<Utc>) {
+        match self.t_safe {
+            None => self.t_safe = Some(ts),
+            Some(current) if ts > current => self.t_safe = Some(ts),
+            _ => {}
+        }
+    }
+
+    pub fn heartbeat_watcher(&self) -> HeartbeatWatcher {
+        HeartbeatWatcher(Arc::clone(&self.heartbeat))
+    }
+
+    pub fn signal_heartbeat(&self) {
+        self.heartbeat.0.notify_one();
+    }
+
+    pub fn get_heartbeat_state(&self) -> Arc<HeartbeatState> {
+        Arc::clone(&self.heartbeat)
     }
 
     pub fn get_wal(&self) -> &WriteAheadLog {

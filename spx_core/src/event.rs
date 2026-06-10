@@ -24,6 +24,10 @@ pub enum PaxosEvent {
     // in-flight batch queue and clear any batches that have been waiting too long
     AcceptTimeoutCheckFired,
 
+    // No client writes have arrived for 8 seconds; the leader should broadcast a heartbeat
+    // accept request with an updated min_next_ts to advance t_safe on all followers
+    HeartbeatTimerFired,
+
     // This member has received a pre-vote message from a leader pre-candidate
     PreVoteRequestReceived(PaxosCommand<PreVoteRequest, PreVoteResponse>),
 
@@ -68,6 +72,7 @@ impl PaxosEvent {
             PaxosEvent::ClientWriteRequestReceived(_) => None,
             PaxosEvent::WriteFlushTimerFired => None,
             PaxosEvent::AcceptTimeoutCheckFired => None,
+            PaxosEvent::HeartbeatTimerFired => None,
         }
     }
 }

@@ -1,4 +1,5 @@
-use spx_core::{VoteRequest, VoteResponse, VoteOutcome, VotePromise, VoteRejection, LogEntry};
+use chrono::{DateTime, Utc};
+use spx_core::{LogEntry, VoteOutcome, VotePromise, VoteRejection, VoteRequest, VoteResponse};
 use uuid::Uuid;
 
 fn log_entry_to_proto(e: LogEntry) -> spx_protocol::LogEntry {
@@ -14,6 +15,7 @@ fn log_entry_from_proto(e: spx_protocol::LogEntry) -> LogEntry {
         term: e.term,
         slot: e.slot,
         entry: e.entry,
+        timestamp: DateTime::<Utc>::UNIX_EPOCH,
     }
 }
 
