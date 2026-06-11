@@ -33,7 +33,7 @@ pub fn accept_request_to_proto(r: AcceptRequest) -> spx_protocol::AcceptRequest 
         entries: r.entries.into_iter().map(accept_log_entry_to_proto).collect(),
         leader_commit_slot: r.leader_commit_slot,
         t_send: r.t_send.timestamp_millis(),
-        min_next_ts: r.min_next_ts.timestamp_millis(),
+        min_next_ts: r.min_next_ts.map(|ts| ts.timestamp_millis()),
     }
 }
 
@@ -46,7 +46,7 @@ pub fn accept_request_from_proto(r: spx_protocol::AcceptRequest) -> AcceptReques
         entries: r.entries.into_iter().map(accept_log_entry_from_proto).collect(),
         leader_commit_slot: r.leader_commit_slot,
         t_send: millis_to_datetime(r.t_send),
-        min_next_ts: millis_to_datetime(r.min_next_ts),
+        min_next_ts: r.min_next_ts.map(millis_to_datetime),
     }
 }
 

@@ -26,7 +26,9 @@ pub struct AcceptRequest {
 
     // A lower-bound promise on the timestamp that will be assigned to slot n+1, where n is the
     // highest slot in this request. The next write will carry a timestamp >= this value.
-    pub min_next_ts: DateTime<Utc>,
+    // None when the leader is sending entries with no explicit timestamp promise (followers use
+    // the committed entry's timestamp to advance t_safe instead).
+    pub min_next_ts: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone)]

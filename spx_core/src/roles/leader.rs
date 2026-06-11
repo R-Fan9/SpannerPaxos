@@ -1,4 +1,4 @@
-use crate::context::HeartbeatState;
+use crate::context::{AcceptTimeoutCheckState, HeartbeatState, WriteFlushState};
 use crate::models::{LogEntry, LogPosition};
 use crate::roles::PaxosRole;
 use crate::state_machine::PaxosState;
@@ -14,6 +14,7 @@ use std::error::Error;
 use std::sync::Arc;
 use std::time::Duration;
 use tonic::async_trait;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 struct InFlightBatch {
@@ -89,6 +90,9 @@ pub struct Leader {
     // Countdown clock that fires HeartbeatTimerFired after 8 seconds of no client writes;
     // reset on every incoming client write.
     heartbeat_cd_clock: CountDownClock,
+
+    // Child token cancelled on Drop to stop the write-flush and accept-timeout-check timer tasks
+    cancellation_token: CancellationToken,
 }
 
 impl Leader {
@@ -98,37 +102,36 @@ impl Leader {
     const ACCEPT_TIMEOUT_CHECK_INTERVAL: Duration = Duration::from_secs(60);
     const HEARTBEAT_TIMEOUT_MS: u64 = 8_000;
 
-    fn spawn_write_flush_timer(ctx: &PaxosSharedContext) {
-        let token = ctx.get_cancellation_token();
-        let signal = ctx.signal_write_flush_fn();
+    fn spawn_write_flush_timer(token: CancellationToken, state: Arc<WriteFlushState>) {
         tokio::spawn(async move {
             loop {
                 tokio::select! {
                     biased;
                     _ = token.cancelled() => break,
-                    _ = tokio::time::sleep(Self::DEFAULT_WRITE_FLUSH_INTERVAL) => signal(),
+                    _ = tokio::time::sleep(Self::DEFAULT_WRITE_FLUSH_INTERVAL) => state.signal(),
                 }
             }
         });
     }
 
-    fn spawn_accept_timeout_check_timer(ctx: &PaxosSharedContext) {
-        let token = ctx.get_cancellation_token();
-        let signal = ctx.signal_accept_timeout_check_fn();
+    fn spawn_accept_timeout_check_timer(token: CancellationToken, state: Arc<AcceptTimeoutCheckState>) {
         tokio::spawn(async move {
             loop {
                 tokio::select! {
                     biased;
                     _ = token.cancelled() => break,
-                    _ = tokio::time::sleep(Self::ACCEPT_TIMEOUT_CHECK_INTERVAL) => signal(),
+                    _ = tokio::time::sleep(Self::ACCEPT_TIMEOUT_CHECK_INTERVAL) => state.signal(),
                 }
             }
         });
     }
 
-    fn start_heartbeat_countdown(heartbeat_cd_clock: &CountDownClock, heartbeat_state: Arc<HeartbeatState>) {
+    fn start_heartbeat_countdown(
+        heartbeat_cd_clock: &CountDownClock,
+        heartbeat_state: Arc<HeartbeatState>,
+    ) {
         heartbeat_cd_clock.start_fixed(Self::HEARTBEAT_TIMEOUT_MS, move || {
-            heartbeat_state.0.notify_one();
+            heartbeat_state.signal();
         });
     }
 
@@ -144,10 +147,11 @@ impl Leader {
             .map(|(id, pos)| (id, FollowerState::new(pos)))
             .collect();
 
-        Self::spawn_write_flush_timer(ctx);
-        Self::spawn_accept_timeout_check_timer(ctx);
-
         let heartbeat_cd_clock = CountDownClock::new();
+        let cancellation_token = ctx.get_cancellation_token().child_token();
+
+        Self::spawn_write_flush_timer(cancellation_token.clone(), ctx.get_write_flush_state());
+        Self::spawn_accept_timeout_check_timer(cancellation_token.clone(), ctx.get_accept_timeout_check_state());
         Self::start_heartbeat_countdown(&heartbeat_cd_clock, ctx.get_heartbeat_state());
 
         Self {
@@ -157,6 +161,7 @@ impl Leader {
             pending_write_count: 0,
             write_batch_size: Self::DEFAULT_WRITE_BATCH_SIZE,
             heartbeat_cd_clock,
+            cancellation_token,
         }
     }
 
@@ -250,16 +255,6 @@ impl Leader {
 
         let last_sent_log = entries.last().cloned();
         let t_send = TrueTime::now().earliest;
-
-        // The lowest timestamp the leader could legally assign to slot n+1. When provided, this
-        // is a heartbeat-driven value pushed to followers to advance t_safe with no active writes.
-        // When absent, derived from last_sent_log.timestamp + 1ms (smallest unit above the batch).
-        let min_next_ts = min_next_ts.unwrap_or_else(|| {
-            last_sent_log
-                .as_ref()
-                .expect("last_sent_log must be present when min_next_ts is not provided")
-                .timestamp + chrono::Duration::milliseconds(1)
-        });
 
         let request = AcceptRequest {
             term: ctx.get_current_term(),
@@ -530,6 +525,13 @@ impl Leader {
         // Dispatch another accept request to the follower with updated log anchor and entries
         self.dispatch_accept_request_to_follower(member_id, ctx, None)
             .await
+    }
+}
+
+impl Drop for Leader {
+    fn drop(&mut self) {
+        self.cancellation_token.cancel();
+        self.heartbeat_cd_clock.cancel();
     }
 }
 

@@ -14,14 +14,10 @@ mod heartbeat_watcher;
 mod lease_watcher;
 mod write_flush_watcher;
 
-use accept_timeout_check_watcher::AcceptTimeoutCheckState;
-use lease_watcher::LeaseState;
-use write_flush_watcher::WriteFlushState;
-
-pub use accept_timeout_check_watcher::AcceptTimeoutCheckWatcher;
+pub use accept_timeout_check_watcher::{AcceptTimeoutCheckState, AcceptTimeoutCheckWatcher};
 pub use heartbeat_watcher::{HeartbeatState, HeartbeatWatcher};
-pub use lease_watcher::LeaseWatcher;
-pub use write_flush_watcher::WriteFlushWatcher;
+pub use lease_watcher::{LeaseState, LeaseWatcher};
+pub use write_flush_watcher::{WriteFlushState, WriteFlushWatcher};
 
 pub struct PaxosSharedContext {
     // The unique identifier for this member (node)
@@ -119,32 +115,20 @@ impl PaxosSharedContext {
         self.cancellation_token.clone()
     }
 
-    pub fn lease_watcher(&self) -> LeaseWatcher {
-        LeaseWatcher(Arc::clone(&self.lease))
+    pub fn get_lease_state(&self) -> Arc<LeaseState> {
+        Arc::clone(&self.lease)
     }
 
-    pub fn accept_timeout_check_watcher(&self) -> AcceptTimeoutCheckWatcher {
-        AcceptTimeoutCheckWatcher(Arc::clone(&self.accept_timeout_check))
+    pub fn get_accept_timeout_check_state(&self) -> Arc<AcceptTimeoutCheckState> {
+        Arc::clone(&self.accept_timeout_check)
     }
 
-    pub fn signal_accept_timeout_check_fn(&self) -> impl Fn() + Send + 'static {
-        let state = Arc::clone(&self.accept_timeout_check);
-        move || state.0.notify_one()
-    }
-
-    pub fn write_flush_watcher(&self) -> WriteFlushWatcher {
-        WriteFlushWatcher(Arc::clone(&self.write_flush))
+    pub fn get_write_flush_state(&self) -> Arc<WriteFlushState> {
+        Arc::clone(&self.write_flush)
     }
 
     pub fn signal_write_flush(&self) {
-        self.write_flush.0.notify_one();
-    }
-
-    // Returns a cheap, Send closure that signals the write flush watcher. Used by the leader's
-    // periodic timer task which cannot borrow ctx across an await point.
-    pub fn signal_write_flush_fn(&self) -> impl Fn() + Send + 'static {
-        let state = Arc::clone(&self.write_flush);
-        move || state.0.notify_one()
+        self.write_flush.signal();
     }
 
     pub fn get_event_sender(&self) -> Sender<PaxosEvent> {
@@ -273,14 +257,6 @@ impl PaxosSharedContext {
             Some(current) if ts > current => self.t_safe = Some(ts),
             _ => {}
         }
-    }
-
-    pub fn heartbeat_watcher(&self) -> HeartbeatWatcher {
-        HeartbeatWatcher(Arc::clone(&self.heartbeat))
-    }
-
-    pub fn signal_heartbeat(&self) {
-        self.heartbeat.0.notify_one();
     }
 
     pub fn get_heartbeat_state(&self) -> Arc<HeartbeatState> {

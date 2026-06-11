@@ -1,6 +1,6 @@
 use crate::PaxosDispatcher;
 use crate::PaxosEvent;
-use crate::context::PaxosSharedContext;
+use crate::context::{AcceptTimeoutCheckWatcher, HeartbeatWatcher, LeaseWatcher, PaxosSharedContext, WriteFlushWatcher};
 use crate::roles::Follower;
 use spx_lib::worker_runner::Worker;
 use std::collections::HashSet;
@@ -54,10 +54,10 @@ impl PaxosStateMachine {
             self.event_tx.clone(),
             cancellation_token.clone(),
         );
-        let lease_watcher = ctx.lease_watcher();
-        let write_flush_watcher = ctx.write_flush_watcher();
-        let accept_timeout_check_watcher = ctx.accept_timeout_check_watcher();
-        let heartbeat_watcher = ctx.heartbeat_watcher();
+        let lease_watcher = LeaseWatcher::new(ctx.get_lease_state());
+        let write_flush_watcher = WriteFlushWatcher::new(ctx.get_write_flush_state());
+        let accept_timeout_check_watcher = AcceptTimeoutCheckWatcher::new(ctx.get_accept_timeout_check_state());
+        let heartbeat_watcher = HeartbeatWatcher::new(ctx.get_heartbeat_state());
         let mut current_state = PaxosState::Follower(Follower::new(None));
         let mut event_rx = self.event_rx.lock().await;
 

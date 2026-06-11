@@ -240,8 +240,11 @@ impl PaxosRole for Candidate {
         match event {
             PaxosEvent::LeaderLeaseExpired
             | PaxosEvent::ElectionCountdownExpired
-            | PaxosEvent::PreVoteCampaignExpired => {
-                // Already in a leader election process, ignore these events
+            | PaxosEvent::PreVoteCampaignExpired
+            | PaxosEvent::WriteFlushTimerFired
+            | PaxosEvent::AcceptTimeoutCheckFired
+            | PaxosEvent::HeartbeatTimerFired => {
+                // Already in a leader election process; ignore election and leader timer events that don't apply here
                 Ok(PaxosState::Candidate(self))
             }
             PaxosEvent::VoteCampaignExpired => {
@@ -282,13 +285,10 @@ impl PaxosRole for Candidate {
             PaxosEvent::ClientWriteRequestReceived(command) => {
                 let _ = command.send(ClientWriteResponse {
                     success: false,
-                    error: Some("not the leader".to_string()),
+                    error: Some("no active leader in the current Paxos group, rejecting incoming write request".to_string()),
                 });
                 Ok(PaxosState::Candidate(self))
             }
-            PaxosEvent::WriteFlushTimerFired => Ok(PaxosState::Candidate(self)),
-            PaxosEvent::AcceptTimeoutCheckFired => Ok(PaxosState::Candidate(self)),
-            PaxosEvent::HeartbeatTimerFired => Ok(PaxosState::Candidate(self)),
         }
     }
 }

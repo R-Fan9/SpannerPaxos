@@ -1,6 +1,6 @@
 use crate::configs::MemberConfig;
 use crate::grpc::util;
-use spx_core::{AcceptRequest, PaxosDispatcher, PaxosEvent, PreVoteRequest, VoteRequest};
+use spx_core::{AcceptRequest, ClientWriteRequest, ClientWriteResponse, PaxosDispatcher, PaxosEvent, PreVoteRequest, VoteRequest};
 use spx_protocol::paxos_client::PaxosClient;
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
@@ -147,6 +147,26 @@ impl PaxosDispatcher for GrpcPaxosDispatcher {
                     util::accept_response_from_proto(response.into_inner()),
                 ))
             })
+        });
+        Ok(())
+    }
+
+    async fn dispatch_client_write(
+        &self,
+        leader_id: Uuid,
+        request: ClientWriteRequest,
+        on_response: Box<dyn FnOnce(ClientWriteResponse) + Send + 'static>,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let mut client = self.get_paxos_client(leader_id).await?;
+        tokio::spawn(async move {
+            let response = match client.client_write(util::client_write_request_to_proto(request)).await {
+                Ok(r) => util::client_write_response_from_proto(r.into_inner()),
+                Err(e) => ClientWriteResponse {
+                    success: false,
+                    error: Some(format!("forward to leader {} failed: {:?}", leader_id, e)),
+                },
+            };
+            on_response(response);
         });
         Ok(())
     }

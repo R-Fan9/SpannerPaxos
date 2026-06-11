@@ -26,7 +26,8 @@ message AcceptRequest {
 
   // A lower-bound promise on the timestamp that will be assigned to slot n+1, where n is the
   // highest slot in this request. The next write will carry a timestamp >= this value (unix milliseconds).
-  int64 min_next_ts = 8;
+  // Absent when the leader sends entries with no explicit timestamp promise.
+  optional int64 min_next_ts = 8;
 }
 
 message AcceptResponse {

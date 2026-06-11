@@ -1,4 +1,4 @@
-use crate::{AcceptRequest, PreVoteRequest, VoteRequest};
+use crate::{AcceptRequest, ClientWriteRequest, ClientWriteResponse, PreVoteRequest, VoteRequest};
 use std::error::Error;
 use tonic::async_trait;
 use uuid::Uuid;
@@ -24,5 +24,14 @@ pub trait PaxosDispatcher: Send + Sync {
         &self,
         member_id: Uuid,
         request: AcceptRequest,
+    ) -> Result<(), Box<dyn Error + Send + Sync>>;
+
+    // Forward a client write request to the current leader; spawns a background task that awaits
+    // the leader's response and invokes on_response with it
+    async fn dispatch_client_write(
+        &self,
+        leader_id: Uuid,
+        request: ClientWriteRequest,
+        on_response: Box<dyn FnOnce(ClientWriteResponse) + Send + 'static>,
     ) -> Result<(), Box<dyn Error + Send + Sync>>;
 }

@@ -1,11 +1,11 @@
 use crate::roles::{PaxosRole, PreCandidate};
 use crate::state_machine::PaxosState;
 use crate::{
-    AcceptRequest, AcceptResponse, ClientWriteResponse, ConflictHint, LogEntry, PaxosEvent,
-    PaxosSharedContext, PreVoteRequest, PreVoteResponse, VoteOutcome, VotePromise, VoteRejection,
-    VoteRequest, VoteResponse,
+    AcceptRequest, AcceptResponse, ClientWriteRequest, ClientWriteResponse, ConflictHint, LogEntry,
+    PaxosCommand, PaxosEvent, PaxosSharedContext, PreVoteRequest, PreVoteResponse, VoteOutcome,
+    VotePromise, VoteRejection, VoteRequest, VoteResponse,
 };
-use chrono::{DateTime, Utc};
+use chrono::Duration;
 use spx_lib::count_down_clock::CountDownClock;
 use std::error::Error;
 use tonic::async_trait;
@@ -362,14 +362,21 @@ impl Follower {
             let new_committed_slot = request.leader_commit_slot.min(last_written_slot);
             if new_committed_slot > ctx.get_committed_slot() {
                 ctx.set_committed_slot(new_committed_slot);
+
+                // Advance t_safe to the committed entry's timestamp: all writes through this slot
+                // are durable, so reads at or before that timestamp see a consistent snapshot.
+                if let Some(entry) = ctx.get_uncommitted_logs().get(&new_committed_slot) {
+                    ctx.advance_t_safe(entry.timestamp);
+                }
+
+                // Clean up in memory uncommitted logs by keeping only logs that have not yet been committed
                 ctx.get_uncommitted_logs_mut()
                     .retain(|&slot, _| slot > new_committed_slot);
+            } else if let Some(min_next_ts) = request.min_next_ts {
+                // If the leader provided a min_next_ts promise, advance t_safe past it as well.
+                // This lets followers serve strong reads even when there are no new entries to commit.
+                ctx.advance_t_safe(min_next_ts - Duration::milliseconds(1));
             }
-
-            // The leader promises the next write at slot n+1 will carry a timestamp >= min_next_ts,
-            // so reads are safe for any timestamp strictly below min_next_ts. Subtract 1ms (the
-            // smallest representable unit) to exclude min_next_ts itself, which a future write may claim.
-            ctx.advance_t_safe(request.min_next_ts - chrono::Duration::milliseconds(1));
 
             AcceptResponse {
                 member_id: current_member_id,
@@ -385,6 +392,26 @@ impl Follower {
         ctx.extend_leader_lease_expiry_time().await;
 
         response
+    }
+
+    async fn handle_client_write(
+        &self,
+        command: PaxosCommand<ClientWriteRequest, ClientWriteResponse>,
+        ctx: &PaxosSharedContext,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let Some(leader_id) = self.current_leader_id else {
+            let _ = command.send(ClientWriteResponse {
+                success: false,
+                error: Some("no active leader in the current Paxos group, rejecting incoming write request".to_string()),
+            });
+            return Ok(());
+        };
+        let request = command.get_request();
+        ctx.get_dispatcher()
+            .dispatch_client_write(leader_id, request, Box::new(move |resp| {
+                let _ = command.send(resp);
+            }))
+            .await
     }
 
     async fn handle_vote_response(&mut self, response: VoteResponse, ctx: &PaxosSharedContext) {
@@ -416,8 +443,12 @@ impl PaxosRole for Follower {
         ctx: &mut PaxosSharedContext,
     ) -> Result<PaxosState, Box<dyn Error + Send + Sync>> {
         match event {
-            PaxosEvent::PreVoteCampaignExpired | PaxosEvent::VoteCampaignExpired => {
-                // Not in an election campaign, ignore these events
+            PaxosEvent::PreVoteCampaignExpired
+            | PaxosEvent::VoteCampaignExpired
+            | PaxosEvent::WriteFlushTimerFired
+            | PaxosEvent::AcceptTimeoutCheckFired
+            | PaxosEvent::HeartbeatTimerFired => {
+                // Not in a pre-candidate, candidate or leader state, ignore these events
                 Ok(PaxosState::Follower(self))
             }
             PaxosEvent::LeaderLeaseExpired => {
@@ -483,15 +514,9 @@ impl PaxosRole for Follower {
                 Ok(PaxosState::Follower(self))
             }
             PaxosEvent::ClientWriteRequestReceived(command) => {
-                let _ = command.send(ClientWriteResponse {
-                    success: false,
-                    error: Some("not the leader".to_string()),
-                });
+                self.handle_client_write(command, ctx).await?;
                 Ok(PaxosState::Follower(self))
             }
-            PaxosEvent::WriteFlushTimerFired => Ok(PaxosState::Follower(self)),
-            PaxosEvent::AcceptTimeoutCheckFired => Ok(PaxosState::Follower(self)),
-            PaxosEvent::HeartbeatTimerFired => Ok(PaxosState::Follower(self)),
         }
     }
 }

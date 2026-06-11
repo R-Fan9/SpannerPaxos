@@ -22,7 +22,13 @@ impl LeaseState {
 
 // Polls the lease expiry without borrowing PaxosSharedContext, so &mut ctx can be
 // passed into event handlers inside the state machine's tokio::select!.
-pub struct LeaseWatcher(pub(super) Arc<LeaseState>);
+pub struct LeaseWatcher(Arc<LeaseState>);
+
+impl LeaseWatcher {
+    pub fn new(state: Arc<LeaseState>) -> Self {
+        Self(state)
+    }
+}
 
 impl LeaseWatcher {
     pub async fn wait_until_expired(&self, cancellation_token: &CancellationToken) {
