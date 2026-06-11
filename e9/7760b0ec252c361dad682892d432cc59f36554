@@ -1,0 +1,70 @@
+spx_core/src/context/heartbeat_watcher.rs
+  s_249cb93aaf91f5::t_66ebfece53bfbc 5,11-14,19,22-25
+spx_protocol/proto/messages/accept.proto
+  s_249cb93aaf91f5::t_8e5d043776d745 29-30
+spx_core/src/messages/accept.rs
+  s_249cb93aaf91f5::t_a8e67e1ccb5d03 29-31
+spx_core/src/dispatcher.rs
+  s_249cb93aaf91f5::t_d69aeae5918d8a 29-31,35-36
+  s_249cb93aaf91f5::t_0393e5ba5bcfcc 1,28,32-34
+spx_core/src/state_machine/mod.rs
+  s_249cb93aaf91f5::t_3fffc39874c57c 3
+  s_249cb93aaf91f5::t_62b2a21d24f9ab 57-60
+spx_core/src/roles/precandidate.rs
+  s_249cb93aaf91f5::t_8f4c3e433d472d 289
+  s_249cb93aaf91f5::t_899b437f946b7e 243-246
+spx_core/src/roles/follower.rs
+  s_249cb93aaf91f5::t_cf69594b95b13c 4-6
+  s_249cb93aaf91f5::t_cae13685a9400e 8
+  s_249cb93aaf91f5::t_ecfe925d694a80 371
+  s_249cb93aaf91f5::t_b9b2fb4f4c9bff 397-404,406-416
+  s_249cb93aaf91f5::t_a96a0d9d41b00a 365-370,376-377
+  s_249cb93aaf91f5::t_113c67d39d40e7 405
+  s_249cb93aaf91f5::t_1cf3540871c9b0 378
+  s_249cb93aaf91f5::t_1afcffa6401dbf 517
+spx_core/src/context/mod.rs
+  s_249cb93aaf91f5::t_5cf88d6536bb58 118-119,122-123,126-127,131
+  s_249cb93aaf91f5::t_b18f021e2c22c3 17,19-20
+spx_app/src/grpc/paxos_dispatcher.rs
+  s_249cb93aaf91f5::t_d64459e2703d72 154,158-159,161-171
+  s_249cb93aaf91f5::t_ff08bb36fe2a83 3
+  s_249cb93aaf91f5::t_9ce4112952bd67 153,155-157,160,172
+spx_core/src/context/accept_timeout_check_watcher.rs
+  s_249cb93aaf91f5::t_e1900d9ec0fbf2 5,11-14,19,22-25
+spx_core/src/context/write_flush_watcher.rs
+  s_249cb93aaf91f5::t_4795f59da59885 5,11-14,19,22-25
+spx_app/src/grpc/util/proto_conversions/accept.rs
+  s_249cb93aaf91f5::t_a60a3917f0ad5f 36,49
+spx_app/src/grpc/util/proto_conversions/client_write.rs
+  s_249cb93aaf91f5::t_d711f7b460b850 7-10,17-21
+spx_core/src/roles/candidate.rs
+  s_249cb93aaf91f5::t_723328fb62f399 288
+  s_249cb93aaf91f5::t_77ce374e6d74e3 243-246
+spx_core/src/context/lease_watcher.rs
+  s_249cb93aaf91f5::t_1569784134150d 25-31
+spx_core/src/roles/leader.rs
+  s_249cb93aaf91f5::t_6f20773de42716 134
+  s_249cb93aaf91f5::t_4692cdb021330b 1
+  s_249cb93aaf91f5::t_924e5001af8d83 105,111,117,123
+  s_249cb93aaf91f5::t_82b3039d2af47e 17
+  s_249cb93aaf91f5::t_53e5b715604046 151,164
+  s_249cb93aaf91f5::t_0d15b04ddc4074 531-537
+  s_249cb93aaf91f5::t_460304e3ef6953 93-95
+  s_249cb93aaf91f5::t_2b3c06cbe78f73 153-154
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "e97760b0ec252c361dad682892d432cc59f36554",
+  "prompts": {},
+  "sessions": {
+    "s_249cb93aaf91f5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "babe8bb3-a4bb-475c-9dc8-50846005bf3c",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ricky Fan <haozhengfan@geotab.com>"
+    }
+  }
+}
