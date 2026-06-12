@@ -1,0 +1,53 @@
+spx_core/src/roles/precandidate.rs
+  s_e30bfd1c6185ab::t_b118f0fe1d9f65 267,269,271
+  s_e30bfd1c6185ab::t_43a14cf6fd906d 268,270,272
+  s_e30bfd1c6185ab::t_5da71e2a91e99c 4-6
+  s_e30bfd1c6185ab::t_99a39809758363 252-253,256,266
+  s_e30bfd1c6185ab::t_2d26d1c227b66e 254-255,257-265
+spx_core/src/messages/accept.rs
+  s_e30bfd1c6185ab::t_2f3c5b85727220 2
+  s_e30bfd1c6185ab::t_0579a7342424ff 56-73
+spx_core/src/roles/leader.rs
+  s_e30bfd1c6185ab::t_f56e6181d6c85c 668,671-673,700,703-705
+  s_e30bfd1c6185ab::t_2936fa71f0a279 8
+  s_e30bfd1c6185ab::t_dc3dc6ed452526 669-670
+  s_e30bfd1c6185ab::t_10fa68cf66cfa6 644,667
+  s_e30bfd1c6185ab::t_96f13c4c02291b 674-675,683,685,693-699
+  s_e30bfd1c6185ab::t_437a4d24370f0e 701-702
+  s_e30bfd1c6185ab::t_42cc91bf3495c2 706-715,717-719
+  s_e30bfd1c6185ab::t_170eaa386251c1 611-613,616
+  s_e30bfd1c6185ab::t_05c174e188589a 3
+  s_e30bfd1c6185ab::t_5d0585bc8317e9 655
+  s_e30bfd1c6185ab::t_179c5166c5ab0d 662-665
+  s_e30bfd1c6185ab::t_cfe8c8dda39a6a 537-593
+  s_e30bfd1c6185ab::t_151229dc0f919d 637-643
+spx_core/src/roles/follower.rs
+  s_e30bfd1c6185ab::t_0f4c33a58f6df9 422-425
+  s_e30bfd1c6185ab::t_9fdf9ba67cffbd 509,511
+  s_e30bfd1c6185ab::t_f9442e5bfb1311 48
+  s_e30bfd1c6185ab::t_ea07db5c0098b7 225-228
+  s_e30bfd1c6185ab::t_b85fd7e6a66bf3 117
+  s_e30bfd1c6185ab::t_bd5644848052da 267
+spx_core/src/roles/candidate.rs
+  s_e30bfd1c6185ab::t_8e63b7fb495764 251-252,255,265
+  s_e30bfd1c6185ab::t_5f3ffb1ca9f3d4 5-6
+  s_e30bfd1c6185ab::t_c99b636c09d120 253-254,256-264
+  s_e30bfd1c6185ab::t_53a0720043ae74 266,268,270
+  s_e30bfd1c6185ab::t_a67fc5fc14bad3 267,269,271
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "533f290eacd74cec7ea47b5dc133d67c2c585480",
+  "prompts": {},
+  "sessions": {
+    "s_e30bfd1c6185ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a6b346f3-e4e9-4ea7-91bc-d8792c4b2fcb",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ricky Fan <haozhengfan@geotab.com>"
+    }
+  }
+}
