@@ -1,0 +1,26 @@
+spx_core/src/roles/candidate.rs
+  s_e30bfd1c6185ab::t_66621820f43713 254-261
+spx_core/src/roles/follower.rs
+  s_e30bfd1c6185ab::t_b0d156255750d2 296-297
+  s_e30bfd1c6185ab::t_e2ca34cf24d4ce 295,298-313
+spx_core/src/roles/leader.rs
+  s_e30bfd1c6185ab::t_e71dda18880dea 425-428
+spx_core/src/roles/precandidate.rs
+  s_e30bfd1c6185ab::t_5bc0f8d1bda975 255-262
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "b21fd4cff798ec2f481c64235731b3df5ca907cd",
+  "prompts": {},
+  "sessions": {
+    "s_e30bfd1c6185ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a6b346f3-e4e9-4ea7-91bc-d8792c4b2fcb",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ricky Fan <haozhengfan@geotab.com>"
+    }
+  }
+}
