@@ -45,7 +45,7 @@ impl Follower {
         self.current_leader_id = Some(leader_id);
     }
 
-    async fn handle_pre_vote_request(
+    pub async fn handle_pre_vote_request(
         &self,
         request: PreVoteRequest,
         ctx: &PaxosSharedContext,
@@ -114,7 +114,7 @@ impl Follower {
         }
     }
 
-    async fn handle_vote_request(
+    pub async fn handle_vote_request(
         &mut self,
         request: VoteRequest,
         ctx: &PaxosSharedContext,
@@ -222,6 +222,10 @@ impl Follower {
         response: PreVoteResponse,
         ctx: &PaxosSharedContext,
     ) {
+        if response.term < ctx.get_current_term() {
+            return;
+        }
+
         if !ctx.is_leader_lease_expired().await {
             return;
         }
@@ -260,7 +264,7 @@ impl Follower {
         Ok(Some(pre_candidate))
     }
 
-    async fn handle_accept_request(
+    pub async fn handle_accept_request(
         &mut self,
         request: AcceptRequest,
         ctx: &mut PaxosSharedContext,
@@ -415,6 +419,10 @@ impl Follower {
     }
 
     async fn handle_vote_response(&mut self, response: VoteResponse, ctx: &PaxosSharedContext) {
+        if response.term < ctx.get_current_term() {
+            return;
+        }
+
         if !ctx.is_leader_lease_expired().await {
             return;
         }
@@ -498,18 +506,9 @@ impl PaxosRole for Follower {
             }
             PaxosEvent::AcceptResponseReceived(response) => {
                 println!(
-                    "{} Info: Ignoring accept response from {} — success: {}, term: {}, last_written_slot: {}{}",
+                    "{} Info: Ignoring accept response — {}",
                     ctx.log_prefix("Follower"),
-                    response.member_id,
-                    response.success,
-                    response.term,
-                    response.last_written_slot,
-                    response.conflict_hint.as_ref().map_or(String::new(), |h| {
-                        format!(
-                            ", conflict_term: {}, conflict_first_slot: {}",
-                            h.conflict_term, h.conflict_first_slot
-                        )
-                    })
+                    response,
                 );
                 Ok(PaxosState::Follower(self))
             }

@@ -1,8 +1,9 @@
 use crate::roles::{Candidate, Follower, PaxosRole, util};
 use crate::state_machine::PaxosState;
 use crate::{
-    ClientWriteResponse, PaxosEvent, PaxosSharedContext, PreVoteResponse, VoteOutcome,
-    VotePromise, VoteRejection, VoteRequest, VoteResponse,
+    AcceptRequest, AcceptResponse, ClientWriteResponse, PaxosCommand, PaxosEvent,
+    PaxosSharedContext, PreVoteResponse, VoteOutcome, VotePromise, VoteRejection, VoteRequest,
+    VoteResponse,
 };
 use spx_lib::count_down_clock::CountDownClock;
 use std::collections::HashMap;
@@ -203,7 +204,8 @@ impl PreCandidate {
     }
 
     fn update_pre_vote_board(&mut self, response: PreVoteResponse) {
-        self.pre_vote_board.insert(response.member_id, Some(response));
+        self.pre_vote_board
+            .insert(response.member_id, Some(response));
     }
 
     fn has_all_pre_vote_responses(&self) -> bool {
@@ -247,6 +249,29 @@ impl PaxosRole for PreCandidate {
                 // Already in a leader election process; ignore election and leader timer events that don't apply here
                 Ok(PaxosState::PreCandidate(self))
             }
+            PaxosEvent::AcceptRequestReceived(accept_command) => {
+                let request = accept_command.get_request();
+                if request.term < ctx.get_current_term() {
+                    return Ok(PaxosState::PreCandidate(self));
+                }
+                println!(
+                    "{} Info: stepping down on accept request from leader {}",
+                    ctx.log_prefix("PreCandidate"),
+                    request.leader_id,
+                );
+                let mut follower = Follower::new(Some(request.leader_id));
+                let response = follower.handle_accept_request(request, ctx).await;
+                accept_command.send(response)?;
+                Ok(PaxosState::Follower(follower))
+            }
+            PaxosEvent::AcceptResponseReceived(response) => {
+                println!(
+                    "{} Info: Ignoring accept response — {}",
+                    ctx.log_prefix("PreCandidate"),
+                    response,
+                );
+                Ok(PaxosState::PreCandidate(self))
+            }
             PaxosEvent::PreVoteCampaignExpired => {
                 println!(
                     "{} Warning: Pre-vote campaign timed out, stepping down as follower",
@@ -277,10 +302,6 @@ impl PaxosRole for PreCandidate {
             }
             PaxosEvent::VoteResponseReceived(response) => {
                 self.handle_vote_response(response, ctx);
-                Ok(PaxosState::PreCandidate(self))
-            }
-            PaxosEvent::AcceptRequestReceived(_) | PaxosEvent::AcceptResponseReceived(_) => {
-                // Pre-candidate is in the middle of a pre-vote campaign, ignore accept messages
                 Ok(PaxosState::PreCandidate(self))
             }
             PaxosEvent::ClientWriteRequestReceived(command) => {

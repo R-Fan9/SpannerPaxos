@@ -1,10 +1,11 @@
 use crate::context::{AcceptTimeoutCheckState, HeartbeatState, WriteFlushState};
 use crate::models::{LogEntry, LogPosition};
-use crate::roles::PaxosRole;
+use crate::roles::{Follower, PaxosRole};
 use crate::state_machine::PaxosState;
 use crate::{
     AcceptLogEntry, AcceptRequest, AcceptResponse, ClientWriteRequest, ClientWriteResponse,
-    PaxosCommand, PaxosEvent, PaxosSharedContext,
+    PaxosCommand, PaxosEvent, PaxosSharedContext, PreVoteResponse, VoteOutcome, VoteRejection,
+    VoteResponse,
 };
 use chrono::{DateTime, Utc};
 use spx_lib::count_down_clock::CountDownClock;
@@ -13,8 +14,8 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::error::Error;
 use std::sync::Arc;
 use std::time::Duration;
-use tonic::async_trait;
 use tokio_util::sync::CancellationToken;
+use tonic::async_trait;
 use uuid::Uuid;
 
 struct InFlightBatch {
@@ -114,7 +115,10 @@ impl Leader {
         });
     }
 
-    fn spawn_accept_timeout_check_timer(token: CancellationToken, state: Arc<AcceptTimeoutCheckState>) {
+    fn spawn_accept_timeout_check_timer(
+        token: CancellationToken,
+        state: Arc<AcceptTimeoutCheckState>,
+    ) {
         tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -151,7 +155,10 @@ impl Leader {
         let cancellation_token = ctx.get_cancellation_token().child_token();
 
         Self::spawn_write_flush_timer(cancellation_token.clone(), ctx.get_write_flush_state());
-        Self::spawn_accept_timeout_check_timer(cancellation_token.clone(), ctx.get_accept_timeout_check_state());
+        Self::spawn_accept_timeout_check_timer(
+            cancellation_token.clone(),
+            ctx.get_accept_timeout_check_state(),
+        );
         Self::start_heartbeat_countdown(&heartbeat_cd_clock, ctx.get_heartbeat_state());
 
         Self {
@@ -526,6 +533,64 @@ impl Leader {
         self.dispatch_accept_request_to_follower(member_id, ctx, None)
             .await
     }
+
+    async fn handle_pre_vote_response(
+        &self,
+        response: PreVoteResponse,
+        ctx: &PaxosSharedContext,
+    ) -> Option<Follower> {
+        if response.term < ctx.get_current_term() {
+            return None;
+        }
+        if !ctx.is_leader_lease_expired().await {
+            return None;
+        }
+        let leader_id = response.try_get_leader(|_| true);
+        if let Some(id) = leader_id {
+            println!(
+                "{} Info: lease expired, stepping down on pre-vote response from {} — new leader {}",
+                ctx.log_prefix("Leader"),
+                response.member_id,
+                id,
+            );
+        } else {
+            println!(
+                "{} Info: lease expired, stepping down on pre-vote response from {}",
+                ctx.log_prefix("Leader"),
+                response.member_id,
+            );
+        }
+        Some(Follower::new(leader_id))
+    }
+
+    async fn handle_vote_response(
+        &self,
+        response: VoteResponse,
+        ctx: &PaxosSharedContext,
+    ) -> Option<Follower> {
+        if response.term < ctx.get_current_term() {
+            return None;
+        }
+        if !ctx.is_leader_lease_expired().await {
+            return None;
+        }
+        let leader_id = response.try_get_leader(|_| true);
+        if let Some(id) = leader_id {
+            println!(
+                "{} Info: lease expired, stepping down on vote response from {} — new leader {}",
+                ctx.log_prefix("Leader"),
+                response.member_id,
+                id,
+            );
+        } else {
+            println!(
+                "{} Info: lease expired, stepping down on vote response from {}",
+                ctx.log_prefix("Leader"),
+                response.member_id,
+            );
+        }
+        Some(Follower::new(leader_id))
+    }
 }
 
 impl Drop for Leader {
@@ -543,6 +608,12 @@ impl PaxosRole for Leader {
         ctx: &mut PaxosSharedContext,
     ) -> Result<PaxosState, Box<dyn Error + Send + Sync>> {
         match event {
+            PaxosEvent::ElectionCountdownExpired
+            | PaxosEvent::PreVoteCampaignExpired
+            | PaxosEvent::VoteCampaignExpired => {
+                // Not in a follower, pre-candidate, candidate state, ignore these events
+                Ok(PaxosState::Leader(self))
+            }
             PaxosEvent::AcceptResponseReceived(response) => {
                 self.handle_accept_response(response, ctx).await?;
                 Ok(PaxosState::Leader(self))
@@ -563,7 +634,89 @@ impl PaxosRole for Leader {
                 self.handle_heartbeat_timer(ctx).await?;
                 Ok(PaxosState::Leader(self))
             }
-            _ => Ok(PaxosState::Leader(self)),
+            PaxosEvent::LeaderLeaseExpired => {
+                println!(
+                    "{} Info: leader lease expired, stepping down",
+                    ctx.log_prefix("Leader"),
+                );
+                Ok(PaxosState::Follower(Follower::new(None)))
+            }
+            PaxosEvent::PreVoteRequestReceived(pre_vote_command) => {
+                let request = pre_vote_command.get_request();
+                if !ctx.is_leader_lease_expired().await {
+                    println!(
+                        "{} Info: lease expired, stepping down on pre-vote request",
+                        ctx.log_prefix("Leader"),
+                    );
+                    let follower = Follower::new(None);
+                    let response = follower.handle_pre_vote_request(request, ctx).await;
+                    pre_vote_command.send(response)?;
+                    return Ok(PaxosState::Follower(follower));
+                }
+
+                let response = PreVoteResponse {
+                    term: ctx.get_current_term(),
+                    member_id: ctx.get_current_member_id(),
+                    vote_granted: false,
+                    current_leader_id: Some(ctx.get_current_member_id()),
+                    member_last_log_term: None,
+                    member_last_log_slot: None,
+                };
+                pre_vote_command.send(response)?;
+                Ok(PaxosState::Leader(self))
+            }
+            PaxosEvent::PreVoteResponseReceived(response) => {
+                if let Some(follower) = self.handle_pre_vote_response(response, ctx).await {
+                    return Ok(PaxosState::Follower(follower));
+                }
+                Ok(PaxosState::Leader(self))
+            }
+            PaxosEvent::VoteRequestReceived(vote_command) => {
+                let request = vote_command.get_request();
+                if ctx.is_leader_lease_expired().await {
+                    println!(
+                        "{} Info: lease expired, stepping down on vote request",
+                        ctx.log_prefix("Leader"),
+                    );
+                    let mut follower = Follower::new(None);
+                    let response = follower.handle_vote_request(request, ctx).await;
+                    vote_command.send(response)?;
+                    return Ok(PaxosState::Follower(follower));
+                }
+
+                let response = VoteResponse {
+                    member_id: ctx.get_current_member_id(),
+                    term: ctx.get_current_term(),
+                    outcome: VoteOutcome::Rejection(VoteRejection {
+                        current_leader_id: Some(ctx.get_current_member_id()),
+                        member_last_log_term: None,
+                        member_last_log_slot: None,
+                        voted_for_id: None,
+                    }),
+                };
+                vote_command.send(response)?;
+                Ok(PaxosState::Leader(self))
+            }
+            PaxosEvent::VoteResponseReceived(response) => {
+                if let Some(follower) = self.handle_vote_response(response, ctx).await {
+                    return Ok(PaxosState::Follower(follower));
+                }
+                Ok(PaxosState::Leader(self))
+            }
+            PaxosEvent::AcceptRequestReceived(accept_command) => {
+                if ctx.is_leader_lease_expired().await {
+                    println!(
+                        "{} Info: lease expired, stepping down on accept request",
+                        ctx.log_prefix("Leader"),
+                    );
+                    let request = accept_command.get_request();
+                    let mut follower = Follower::new(Some(request.leader_id));
+                    let response = follower.handle_accept_request(request, ctx).await;
+                    accept_command.send(response)?;
+                    return Ok(PaxosState::Follower(follower));
+                }
+                Ok(PaxosState::Leader(self))
+            }
         }
     }
 }

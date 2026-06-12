@@ -2,8 +2,8 @@ use crate::models::{LogEntry, LogPosition};
 use crate::roles::{Follower, Leader, PaxosRole, util};
 use crate::state_machine::PaxosState;
 use crate::{
-    ClientWriteResponse, PaxosEvent, PaxosSharedContext, PreVoteResponse, VoteOutcome,
-    VoteRejection, VoteResponse,
+    AcceptRequest, AcceptResponse, ClientWriteResponse, PaxosCommand, PaxosEvent,
+    PaxosSharedContext, PreVoteResponse, VoteOutcome, VoteRejection, VoteResponse,
 };
 use chrono::{DateTime, Utc};
 use spx_lib::count_down_clock::CountDownClock;
@@ -206,7 +206,8 @@ impl Candidate {
                 .map_or(true, |existing| entry.term > existing.term);
 
             if should_insert {
-                self.pending_uncommitted_logs.insert(entry.slot, entry.clone());
+                self.pending_uncommitted_logs
+                    .insert(entry.slot, entry.clone());
             }
         }
     }
@@ -247,6 +248,29 @@ impl PaxosRole for Candidate {
                 // Already in a leader election process; ignore election and leader timer events that don't apply here
                 Ok(PaxosState::Candidate(self))
             }
+            PaxosEvent::AcceptRequestReceived(accept_command) => {
+                let request = accept_command.get_request();
+                if request.term < ctx.get_current_term() {
+                    return Ok(PaxosState::Candidate(self));
+                }
+                println!(
+                    "{} Info: stepping down on accept request from leader {}",
+                    ctx.log_prefix("Candidate"),
+                    request.leader_id,
+                );
+                let mut follower = Follower::new(Some(request.leader_id));
+                let response = follower.handle_accept_request(request, ctx).await;
+                accept_command.send(response)?;
+                Ok(PaxosState::Follower(follower))
+            }
+            PaxosEvent::AcceptResponseReceived(response) => {
+                println!(
+                    "{} Info: Ignoring accept response — {}",
+                    ctx.log_prefix("Candidate"),
+                    response,
+                );
+                Ok(PaxosState::Candidate(self))
+            }
             PaxosEvent::VoteCampaignExpired => {
                 println!(
                     "{} Warning: Vote campaign timed out, stepping down as follower",
@@ -276,10 +300,6 @@ impl PaxosRole for Candidate {
                         Err(follower) => Ok(PaxosState::Follower(follower)),
                     };
                 }
-                Ok(PaxosState::Candidate(self))
-            }
-            PaxosEvent::AcceptRequestReceived(_) | PaxosEvent::AcceptResponseReceived(_) => {
-                // Candidate is in the middle of voting, ignore accept messages
                 Ok(PaxosState::Candidate(self))
             }
             PaxosEvent::ClientWriteRequestReceived(command) => {

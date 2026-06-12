@@ -1,6 +1,9 @@
 use crate::PaxosDispatcher;
 use crate::PaxosEvent;
-use crate::context::{AcceptTimeoutCheckWatcher, HeartbeatWatcher, LeaseWatcher, PaxosSharedContext, WriteFlushWatcher};
+use crate::context::{
+    AcceptTimeoutCheckWatcher, HeartbeatWatcher, LeaseWatcher, PaxosSharedContext,
+    WriteFlushWatcher,
+};
 use crate::roles::Follower;
 use spx_lib::worker_runner::Worker;
 use std::collections::HashSet;
@@ -42,7 +45,6 @@ impl PaxosStateMachine {
         }
     }
 
-
     pub async fn start(
         &self,
         cancellation_token: CancellationToken,
@@ -56,7 +58,8 @@ impl PaxosStateMachine {
         );
         let lease_watcher = LeaseWatcher::new(ctx.get_lease_state());
         let write_flush_watcher = WriteFlushWatcher::new(ctx.get_write_flush_state());
-        let accept_timeout_check_watcher = AcceptTimeoutCheckWatcher::new(ctx.get_accept_timeout_check_state());
+        let accept_timeout_check_watcher =
+            AcceptTimeoutCheckWatcher::new(ctx.get_accept_timeout_check_state());
         let heartbeat_watcher = HeartbeatWatcher::new(ctx.get_heartbeat_state());
         let mut current_state = PaxosState::Follower(Follower::new(None));
         let mut event_rx = self.event_rx.lock().await;
@@ -78,6 +81,15 @@ impl PaxosStateMachine {
                         .expect("Failed to process leader lease expiration");
                 }
 
+                // Wake when the heartbeat countdown expires (no client writes for 8 seconds)
+                _ = heartbeat_watcher.wait_for_heartbeat(&cancellation_token) => {
+                    current_state = current_state
+                        .process_event(PaxosEvent::HeartbeatTimerFired, &mut ctx, &cancellation_token)
+                        .await
+                        .expect("Failed to process heartbeat timer");
+                }
+
+
                 // Wake on a fixed interval to let the leader check for timed-out in-flight batches,
                 // bypassing the event queue
                 _ = accept_timeout_check_watcher.wait_for_check(&cancellation_token) => {
@@ -94,14 +106,6 @@ impl PaxosStateMachine {
                         .process_event(PaxosEvent::WriteFlushTimerFired, &mut ctx, &cancellation_token)
                         .await
                         .expect("Failed to process write flush");
-                }
-
-                // Wake when the heartbeat countdown expires (no client writes for 8 seconds)
-                _ = heartbeat_watcher.wait_for_heartbeat(&cancellation_token) => {
-                    current_state = current_state
-                        .process_event(PaxosEvent::HeartbeatTimerFired, &mut ctx, &cancellation_token)
-                        .await
-                        .expect("Failed to process heartbeat timer");
                 }
 
                 // Listen to the next incoming Paxos event from the channel

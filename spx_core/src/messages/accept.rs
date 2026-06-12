@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use std::fmt;
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -50,6 +51,24 @@ pub struct AcceptResponse {
 
     // The t_send value from the originating AcceptRequest, echoed back for leader lease tracking
     pub echoed_t_send: DateTime<Utc>,
+}
+
+impl fmt::Display for AcceptResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "member_id: {}, success: {}, term: {}, last_written_slot: {}",
+            self.member_id, self.success, self.term, self.last_written_slot,
+        )?;
+        if let Some(h) = &self.conflict_hint {
+            write!(
+                f,
+                ", conflict_term: {}, conflict_first_slot: {}",
+                h.conflict_term, h.conflict_first_slot
+            )?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone)]

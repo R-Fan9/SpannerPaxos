@@ -15,7 +15,7 @@ impl HeartbeatState {
 }
 
 // Wakes the state machine's select arm when the heartbeat countdown expires,
-// signalling the leader to broadcast a heartbeat accept request to advance t_safe on followers.
+// signaling the leader to broadcast a heartbeat accept request to advance t_safe on followers.
 pub struct HeartbeatWatcher(Arc<HeartbeatState>);
 
 impl HeartbeatWatcher {
