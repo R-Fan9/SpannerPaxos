@@ -422,6 +422,10 @@ impl Leader {
             return Ok(());
         }
 
+        if !response.success && response.conflict_hint.is_none() {
+            return Ok(());
+        }
+
         let quorum_size = ctx.get_quorum_size();
 
         // Update last_contact of the follower to the max of the stored and echoed t_send values

@@ -292,8 +292,25 @@ impl Follower {
             };
         }
 
-        // Track the current leader from every accept request
-        self.update_current_leader_id(request.leader_id);
+        // Ignore if the lease has expired or the request is not from the known leader
+        if ctx.is_leader_lease_expired().await
+            || self.current_leader_id != Some(request.leader_id)
+        {
+            println!(
+                "{} Info: Ignoring accept request from unexpected leader {} (known: {:?})",
+                ctx.log_prefix("Follower"),
+                request.leader_id,
+                self.current_leader_id,
+            );
+            return AcceptResponse {
+                member_id: current_member_id,
+                term: current_term,
+                success: false,
+                last_written_slot: 0,
+                conflict_hint: None,
+                echoed_t_send: t_send,
+            };
+        }
 
         let prev_log_slot = request.prev_log_slot;
 

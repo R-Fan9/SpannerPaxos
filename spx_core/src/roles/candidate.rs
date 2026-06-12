@@ -251,6 +251,14 @@ impl PaxosRole for Candidate {
             PaxosEvent::AcceptRequestReceived(accept_command) => {
                 let request = accept_command.get_request();
                 if request.term < ctx.get_current_term() {
+                    accept_command.send(AcceptResponse {
+                        member_id: ctx.get_current_member_id(),
+                        term: ctx.get_current_term(),
+                        success: false,
+                        last_written_slot: 0,
+                        conflict_hint: None,
+                        echoed_t_send: request.t_send,
+                    })?;
                     return Ok(PaxosState::Candidate(self));
                 }
                 println!(
