@@ -1,0 +1,21 @@
+README.md
+  s_65a3e60648768a::t_13d7280559fb89 1,7-107,110-128
+  s_65a3e60648768a::t_d9bdad8ff62525 3-6
+  s_65a3e60648768a::t_50ff768cb09cc5 108-109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.7",
+  "base_commit_sha": "db206272d22f7af4a689dc1deef74b0e8284f61a",
+  "prompts": {},
+  "sessions": {
+    "s_65a3e60648768a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ca0ddc8e-a3d8-42c4-8613-87897f17ae4d",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ricky Fan <haozhengfan@geotab.com>"
+    }
+  }
+}
