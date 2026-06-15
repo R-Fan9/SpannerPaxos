@@ -115,7 +115,7 @@ Rather than running a full log scan upfront, reconciliation is driven lazily thr
 |---|---|---|
 | **Short log** — anchor slot does not exist on follower | `conflict_term = 0`, `conflict_slot = follower_last + 1` | Resend from `conflict_slot` |
 | **Term mismatch** — anchor slot exists but with a different term | `conflict_term = local_term`, `conflict_slot = first slot of that term` | If leader has that term: resend from just after leader's last slot for that term. If not: skip to `conflict_slot` |
-| **Match** — anchor found and terms agree | `success = true` | Update score board; apply the batch |
+| **Match** — anchor found and terms agree | Truncate any conflicting entries ahead of the anchor, append new entries to local WAL, reply `success = true` | Update score board |
 
 Reporting the **first** slot of the conflicting term (not the last) is critical: it lets the Leader bypass the entire dirty term in one step, minimising round-trips.
 
