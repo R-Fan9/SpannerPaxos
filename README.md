@@ -2,8 +2,8 @@
 
 A Rust implementation of the Multi-Paxos consensus protocol, drawing on two papers:
 
-- [Google Spanner](https://storage.googleapis.com/gweb-research2023-media/pubtools/1974.pdf) — for Multi-Paxos, leader leases powered by TrueTime, external consistency via commit wait, and `MinNextTS` for serving reads in idle groups.
-- [Raft](https://raft.github.io/raft.pdf) — for the fast-track log reconciliation algorithm used to efficiently align a new leader's log with its followers.
+- [Raft](https://raft.github.io/raft.pdf) — for Multi-Paxos, randomised election timers, and the fast-track log reconciliation algorithm used to efficiently align a new leader's log with its followers.
+- [Google Spanner](https://storage.googleapis.com/gweb-research2023-media/pubtools/1974.pdf) — for leader leases powered by TrueTime, external consistency via commit wait, and `MinNextTS` for serving reads in idle groups.
 
 ---
 
