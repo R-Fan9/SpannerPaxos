@@ -1,0 +1,19 @@
+README.md
+  s_8f058148bc2cce::t_a3851d0111a870 5-6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "24dc49c6ced7e17991cdb22300bcbe0124b28ba8",
+  "prompts": {},
+  "sessions": {
+    "s_8f058148bc2cce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "baceeff7-d149-4bac-93c9-670db7f060bd",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ricky Fan <haozhengfan@geotab.com>"
+    }
+  }
+}
